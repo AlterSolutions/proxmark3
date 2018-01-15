@@ -50,6 +50,18 @@ int Iso15693AddCrc(uint8_t *req, int n) {
 	return n+2;
 }
 
+// check the CRC as described in ISO 15693-Part 3-Annex C
+// 	v	buffer with data
+//	n	length (including crc)
+//	returns true if the crc is valid, else return false
+bool Iso15693CheckCrc(uint8_t *v, int n)
+{
+	uint16_t crc=Iso15693Crc(v, n-2);
+	if ( (( crc & 0xff ) == v[n-2]) && (( crc >> 8 ) == v[n-1]) )
+		return true;
+	return false;
+}
+
 
 int sprintf(char *str, const char *format, ...);
 

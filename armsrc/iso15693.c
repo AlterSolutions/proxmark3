@@ -79,6 +79,7 @@
 
 #define Crc(data,datalen)     Iso15693Crc(data,datalen)
 #define AddCrc(data,datalen)  Iso15693AddCrc(data,datalen)
+#define CheckCrc(data,datalen)  Iso15693CheckCrc(data,datalen)
 #define sprintUID(target,uid)	Iso15693sprintUID(target,uid)
 
 int DEBUG=0;
@@ -739,7 +740,6 @@ static void BuildIdentifyRequest(void)
 {
 	uint8_t cmd[5];
 
-	uint16_t crc;
 	// one sub-carrier, inventory, 1 slot, fast rate
 	// AFI is at bit 5 (1<<4) when doing an INVENTORY
 	cmd[0] = (1 << 2) | (1 << 5) | (1 << 1);
@@ -748,9 +748,7 @@ static void BuildIdentifyRequest(void)
 	// no mask
 	cmd[2] = 0x00;
 	//Now the CRC
-	crc = Crc(cmd, 3);
-	cmd[3] = crc & 0xff;
-	cmd[4] = crc >> 8;
+	AddCrc(cmd, 3);
 
 	CodeIso15693AsReader(cmd, sizeof(cmd));
 }
@@ -760,7 +758,6 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 {
 	uint8_t cmd[13];
 
-	uint16_t crc;
 	// If we set the Option_Flag in this request, the VICC will respond with the secuirty status of the block
 	// followed by teh block data
 	// one sub-carrier, inventory, 1 slot, fast rate
@@ -780,9 +777,7 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 	// Block number to read
 	cmd[10] = blockNumber;//0x00;
 	//Now the CRC
-	crc = Crc(cmd, 11); // the crc needs to be calculated over 12 bytes
-	cmd[11] = crc & 0xff;
-	cmd[12] = crc >> 8;
+	AddCrc(cmd, 11); // the crc needs to be calculated over 12 bytes
 
 	CodeIso15693AsReader(cmd, sizeof(cmd));
 }
@@ -792,7 +787,6 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 {
 	uint8_t cmd[12];
 
-	uint16_t crc;
 	// one sub-carrier, inventory, 1 slot, fast rate
 	// AFI is at bit 5 (1<<4) when doing an INVENTORY
     //(1 << 2) | (1 << 5) | (1 << 1);
@@ -808,9 +802,7 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 	cmd[8] = uid[1]; //0x05;
 	cmd[9] = uid[0]; //0xe0;
 	//Now the CRC
-	crc = Crc(cmd, 10);
-	cmd[10] = crc & 0xff;
-	cmd[11] = crc >> 8;
+	AddCrc(cmd, 10);
 
 	CodeIso15693AsReader(cmd, sizeof(cmd));
 }
@@ -876,7 +868,6 @@ int SendDataTag(uint8_t *send, int sendlen, int init, int speed, uint8_t **recv)
 #define DBD15STATLEN 48
 void DbdecodeIso15693Answer(int len, uint8_t *d) {
 	char status[DBD15STATLEN+1]={0};
-	uint16_t crc;
 
 	if (len>3) {
 		if (d[0]&(1<<3)) 
@@ -919,12 +910,11 @@ void DbdecodeIso15693Answer(int len, uint8_t *d) {
 		} else {
 			strncat(status,"NoErr ",DBD15STATLEN);
 		}
-			
-		crc=Crc(d,len-2);
-		if ( (( crc & 0xff ) == d[len-2]) && (( crc >> 8 ) == d[len-1]) ) 
+
+		if (CheckCrc(d,len))
 			strncat(status,"CrcOK",DBD15STATLEN);
 		else
-			strncat(status,"CrcFail!",DBD15STATLEN); 
+			strncat(status,"CrcFail!",DBD15STATLEN);
 
 		Dbprintf("%s",status);
 	}
