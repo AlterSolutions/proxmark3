@@ -499,6 +499,146 @@ int CmdHF15DumpMem(const char*Cmd) {
 }
 
 
+int CmdHF15Clone(const char *Cmd)
+{
+	UsbCommand resp;
+	uint8_t uid[8];
+	uint8_t *recv=NULL;
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
+	uint8_t *req=c.d.asBytes;
+	unsigned i, j, retry;
+	int reqlen=0;
+	int blocknum=0;
+	unsigned blocksize=0;
+	char output[80];
+	uint8_t buf[0xff*4];
+	unsigned buflen=0;
+
+	if (!getUID(uid)) {
+		PrintAndLog("No Tag found.");
+		return 0;
+	}
+
+	PrintAndLog("Reading memory from tag UID=%s",sprintUID(NULL,uid));
+	PrintAndLog("Tag Info: %s",getTagInfo(uid));
+
+	req[0]= ISO15_REQ_SUBCARRIER_SINGLE | ISO15_REQ_DATARATE_HIGH |
+		ISO15_REQ_NONINVENTORY | ISO15_REQ_ADDRESS;
+	req[1]=ISO15_CMD_READ;
+	memcpy(&req[2],uid,8);
+
+	for (retry=0; retry<5; retry++) {
+		req[10]=blocknum;
+		reqlen=AddCrc(req,11);
+		c.arg[0]=reqlen;
+
+		SendCommand(&c);
+
+		if (WaitForResponseTimeout(CMD_ACK,&resp,1000)) {
+			recv = resp.d.asBytes;
+			if (ISO15_CRC_CHECK==Crc(recv,resp.arg[0])) {
+				if (!(recv[0] & ISO15_RES_ERROR)) {
+					retry=0;
+					blocksize = resp.arg[0]-3;
+
+					for (i=1; i<resp.arg[0]-2; i++) {
+						if (buflen+1 < 0xff*4)
+							buf[buflen++] = recv[i];
+						else
+							PrintAndLog("Tag size over 1KB");
+					}
+
+					*output=0; // reset outputstring
+					sprintf(output, "Block %02x [%d]   ",blocknum, blocksize);
+					for (i=1; i<resp.arg[0]-2; i++) { // data in hex
+						sprintf(output+strlen(output),"%02X ",recv[i]);
+					}
+					strcat(output,"   ");
+					for (i=1; i<resp.arg[0]-2; i++) { // data in cleaned ascii
+						sprintf(output+strlen(output),"%c",(recv[i]>31 && recv[i]<127)?recv[i]:'.');
+					}
+					PrintAndLog("%s",output);
+					blocknum++;
+				} else {
+					PrintAndLog("Tag returned Error %i: %s",recv[1],TagErrorStr(recv[1]));
+					break;
+				}
+			} // else PrintAndLog("crc");
+		} // else PrintAndLog("r null");
+	} // retry
+
+	PrintAndLog("Reading done");
+	PrintAndLog("Change the tag and press enter...");
+	getchar();
+
+	if (!getUID(uid)) {
+		PrintAndLog("No Tag found.");
+		return 0;
+	}
+
+	PrintAndLog("Writing memory to tag UID=%s",sprintUID(NULL,uid));
+	PrintAndLog("Tag Info: %s",getTagInfo(uid));
+
+	req[0]= ISO15_REQ_SUBCARRIER_SINGLE | ISO15_REQ_DATARATE_HIGH |
+		ISO15_REQ_NONINVENTORY | ISO15_REQ_ADDRESS;
+	memcpy(&req[2],uid,8);
+
+	blocknum = 0;
+
+	for (i = 0 ; i <= buflen ; i++) {
+		req[11+(i%blocksize)] = buf[i];
+		if (i%blocksize == blocksize-1) { // last bytes
+			req[1]=ISO15_CMD_WRITE;
+			req[10] = blocknum++;
+			reqlen=AddCrc(req, 11+blocksize);
+			c.arg[0]=reqlen;
+
+			for (retry=0; retry<32; retry++) {
+				SendCommand(&c);
+				WaitForResponseTimeout(CMD_ACK,&resp,2000);
+
+				req[1]=ISO15_CMD_READ; // check write
+				reqlen=AddCrc(req,11);
+				c.arg[0]=reqlen;
+				SendCommand(&c);
+
+				if (WaitForResponseTimeout(CMD_ACK,&resp,1000)) {
+					recv = resp.d.asBytes;
+					if (ISO15_CRC_CHECK==Crc(recv,resp.arg[0])) {
+						if (!(recv[0] & ISO15_RES_ERROR)) {
+							for (j=1; j<=blocksize; j++) {
+								if (buf[i+j-blocksize] != recv[j])
+									j = blocksize+2;
+							}
+							if (j > blocksize+1) {
+								PrintAndLog("Writing failed");
+								continue;
+							}
+
+							*output=0; // reset outputstring
+							sprintf(output, "Block %02x [%d]   ",req[10], blocksize);
+							for (j=1; j<resp.arg[0]-2; j++) { // data in hex
+								sprintf(output+strlen(output),"%02X ",recv[j]);
+							}
+							strcat(output,"   ");
+							for (j=1; j<resp.arg[0]-2; j++) { // data in cleaned ascii
+								sprintf(output+strlen(output),"%c",(recv[j]>31 && recv[j]<127)?recv[j]:'.');
+							}
+							PrintAndLog("%s",output);
+							break;
+						} else {
+							PrintAndLog("Tag returned Error %i: %s",recv[1],TagErrorStr(recv[1]));
+						}
+					} // else PrintAndLog("crc");
+				} // else PrintAndLog("r null");
+			}
+		}
+	}
+
+	return 0;
+}
+
+
 // "HF 15" interface
 
 static command_t CommandTable15[] = 
@@ -512,6 +652,7 @@ static command_t CommandTable15[] =
 	{"cmd",     CmdHF15Cmd,     0, "Send direct commands to ISO15693 tag"},
 	{"findafi", CmdHF15Afi,     0, "Brute force AFI of an ISO15693 tag"},
 	{"dumpmemory", CmdHF15DumpMem,     0, "Read all memory pages of an ISO15693 tag"},
+	{"clone",   CmdHF15Clone,   0, "Clone an ISO15693 tag"},
 		{NULL, NULL, 0, NULL}
 };
 
