@@ -783,7 +783,7 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 }
 
 // Now the VICC>VCD responses when we are simulating a tag
- static void BuildInventoryResponse( uint8_t *uid)
+/* static void BuildInventoryResponse( uint8_t *uid)
 {
 	uint8_t cmd[12];
 
@@ -805,7 +805,7 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 	AddCrc(cmd, 10);
 
 	CodeIso15693AsReader(cmd, sizeof(cmd));
-}
+}*/
 
 // Universal Method for sending to and recv bytes from a tag
 // 	init ... should we initialize the reader?
@@ -1056,16 +1056,38 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid)
 	LED_D_OFF();
 
 	int answerLen1 = 0;
+	int recvLen = 0;
 	int samples = 0;
 	int tsamples = 0;
 	int wait = 0;
 	int elapsed = 0;
+	int cpt = 0;
+	int pageNum = 0;
 
 	FpgaDownloadAndGo(FPGA_BITSTREAM_HF);
 
 	uint8_t *buf = BigBuf_get_addr() + 3660;
+	uint8_t *recv = BigBuf_get_addr() + 3760;
+	uint8_t *tag = BigBuf_get_EM_addr();
 	memset(buf, 0x00, 100);
-	
+	memset(recv, 0x00, 100);
+	memset(tag, 0x00, CARD_MEMORY_SIZE);
+
+	uint64_t *tagUid = tag;
+	uint8_t *tagDSFID = tagUid+8;
+	uint8_t *tagAFI = tagDSFID+1;
+	uint8_t *tagBpP = tagAFI+1; // Byte/Page
+	uint8_t *tagPages = tagBpP+1;
+	uint8_t *tagIC = tagPages+1;
+	uint8_t *tagData = tagIC+1;
+
+	*tagUid = *((uint64_t*)uid);
+	*tagDSFID = 2;
+	*tagAFI = 0;
+	*tagBpP = 4;
+	*tagPages = 52;
+	*tagIC = 2;
+
 	SetAdcMuxFor(GPIO_MUXSEL_HIPKD);
 	FpgaSetupSsc();
 
@@ -1078,26 +1100,121 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid)
 	LED_C_ON();
 	LED_D_OFF();
 
-	// Listen to reader
-	answerLen1 = GetIso15693AnswerFromSniff(buf, 100, &samples, &elapsed) ;
+	bool highRate = false;
+	bool selected = false;
+	bool finished = false;
+	uint8_t error = 0;
 
-	if (answerLen1 >=1) // we should do a better check than this
+	while (!BUTTON_PRESS() && !finished)
 	{
-		// Build a suitable reponse to the reader INVENTORY cocmmand
-		// not so obsvious, but in the call to BuildInventoryResponse,  the command is copied to the global ToSend buffer used below.
-		
-		BuildInventoryResponse(uid);
-	
-		TransmitTo15693Reader(ToSend,ToSendMax, &tsamples, &wait);
+		WDT_HIT();
+
+		// Listen to reader
+		answerLen1 = GetIso15693AnswerFromSniff(buf, 100, &samples, &elapsed) ;
+
+		buf[answerLen1] = 0;
+
+		Dbprintf("%d octets read from reader command: %x %x %x %x %x %x %x %x %x", answerLen1,
+				 buf[0], buf[1], buf[2], buf[3], buf[4],
+				 buf[5], buf[6], buf[7], buf[8], buf[9]);
+
+		if (answerLen1 <= 3)
+			continue;
+
+		if (CheckCrc(buf,answerLen1))
+			Dbprintf("CrcOK");
+		else
+		{
+			Dbprintf("CrcFail!");
+			continue;
+		}
+
+		recvLen = 0;
+
+		if (buf[1] == ISO15_CMD_STAYQUIET)
+			continue;
+
+		if (buf[0]&ISO15_REQ_SUBCARRIER_TWO)
+			Dbprintf("ISO15_REQ_SUBCARRIER_TWO not supported!");
+		if (buf[0]&ISO15_REQ_PROTOCOL_EXT)
+			Dbprintf("ISO15_REQ_PROTOCOL_EXT not supported!");
+
+		if (buf[0]&ISO15_REQ_DATARATE_HIGH)
+			highRate = true;
+		else
+			highRate = false;
+
+		if (buf[0]&ISO15_REQ_INVENTORY || buf[1] == ISO15_CMD_INVENTORY)
+		{
+			recv[0] = ISO15_NOERROR;
+			recv[1] = *tagDSFID;
+			*((uint64_t*)&recv[2]) = *tagUid;
+			recvLen = 10;
+
+			Dbprintf("Simulationg uid: %x %x %x %x %x %x %x %x",
+					 tagUid[7], tagUid[6], tagUid[5], tagUid[4],
+					 tagUid[3], tagUid[2], tagUid[1], tagUid[0]);
+		}
+		else
+		{
+			if (buf[0]&ISO15_REQ_SELECT && !selected)
+				continue; // drop selected request if not selected
+
+			cpt = 2;
+			if (buf[0]&ISO15_REQ_ADDRESS)
+			{
+				if (*((uint64_t*)(buf+cpt)) != *tagUid)
+					continue; // drop ADDRESSed request with other uid
+				cpt+=8;
+			}
+
+			pageNum = buf[cpt++];
+			if (pageNum >= *tagPages)
+				error = ISO15_ERROR_BLOCK_UNAVAILABLE;
+			else
+			{
+				switch(buf[1])
+				{
+				case ISO15_CMD_READ:
+					recv[0] = ISO15_NOERROR;
+					for (unsigned i = 0 ; i < *tagBpP ; i++)
+						recv[i+1] = tagData[(pageNum*(*tagBpP)) + i];
+					recvLen = *tagBpP + 1;
+					break;
+				case ISO15_CMD_WRITE:
+					if (!(buf[0]&ISO15_REQ_OPTION))
+					{
+						error = ISO15_ERROR_CMD_NOT_REC;
+						break;
+					}
+					for (unsigned i = 0 ; i < *tagBpP ; i++)
+						tagData[(pageNum*(*tagBpP)) + i] = buf[i+2];
+					break;
+				default:
+					Dbprintf("ISO15 CMD 0x%2X not supported : %s", buf[1], buf);
+					error = ISO15_ERROR_CMD_NOT_SUP;
+					break;
+				}
+			}
+		}
+
+		if (error != 0)
+		{
+			recv[0] = ISO15_RES_ERROR;
+			recv[1] = error;
+			recvLen = 2;
+		}
+
+		if (recvLen > 0)
+		{
+			recvLen = AddCrc(recv, recvLen);
+			if (highRate)
+				CodeIso15693AsReader(recv, recvLen);
+			else
+				CodeIso15693AsReader256(recv, recvLen);
+			TransmitTo15693Reader(ToSend,ToSendMax, &tsamples, &wait);
+		}
 	}
-
-	Dbprintf("%d octets read from reader command: %x %x %x %x %x %x %x %x %x", answerLen1,
-		buf[0], buf[1], buf[2],	buf[3],
-		buf[4], buf[5],	buf[6], buf[7], buf[8]);
-
-	Dbprintf("Simulationg uid: %x %x %x %x %x %x %x %x",
-		uid[0], uid[1], uid[2],	uid[3],
-		uid[4], uid[5],	uid[6], uid[7]);
 
 	LED_A_OFF();
 	LED_B_OFF();
