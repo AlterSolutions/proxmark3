@@ -338,7 +338,7 @@ static int GetIso15693AnswerFromTag(uint8_t *receivedResponse, int maxLen, int *
 	/////////// DEMODULATE ///////////////////
 	//////////////////////////////////////////
 
-	int i, j;
+	unsigned i, j;
 	int max = 0, maxPos=0;
 
 	int skip = 4;
@@ -358,7 +358,7 @@ static int GetIso15693AnswerFromTag(uint8_t *receivedResponse, int maxLen, int *
 	}
 		// Dbprintf("SOF at %d, correlation %d", maxPos,max/(arraylen(FrameSOF)/skip));
 
-	int k = 0; // this will be our return value
+	unsigned k = 0; // this will be our return value
 
 	// greg - If correlation is less than 1 then there's little point in continuing
 	if ((max/(arraylen(FrameSOF)/skip)) >= 1)
@@ -476,7 +476,7 @@ static int GetIso15693AnswerFromSniff(uint8_t *receivedResponse, int maxLen, int
 	/////////// DEMODULATE ///////////////////
 	//////////////////////////////////////////
 
-	int i, j;
+	unsigned i, j;
 	int max = 0, maxPos=0;
 
 	int skip = 4;
@@ -496,7 +496,7 @@ static int GetIso15693AnswerFromSniff(uint8_t *receivedResponse, int maxLen, int
 	}
 //	DbpString("SOF at %d, correlation %d", maxPos,max/(arraylen(FrameSOF)/skip));
 
-	int k = 0; // this will be our return value
+	unsigned k = 0; // this will be our return value
 
 	// greg - If correlation is less than 1 then there's little point in continuing
 	if ((max/(arraylen(FrameSOF)/skip)) >= 1)	// THIS SHOULD BE 1

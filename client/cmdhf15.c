@@ -206,7 +206,7 @@ int getUID(uint8_t *buf)
 {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0;
 	
@@ -283,7 +283,7 @@ int CmdHF15Demod(const char *Cmd)
 {
 	// The sampling rate is 106.353 ksps/s, for T = 18.8 us
 	
-	int i, j;
+	unsigned i, j;
 	int max = 0, maxPos = 0;
 
 	int skip = 4;
@@ -305,7 +305,7 @@ int CmdHF15Demod(const char *Cmd)
 		max / (arraylen(FrameSOF) / skip));
 	
 	i = maxPos + arraylen(FrameSOF) / skip;
-	int k = 0;
+	unsigned k = 0;
 	uint8_t outBuf[20];
 	memset(outBuf, 0, sizeof(outBuf));
 	uint8_t mask = 0x01;
@@ -338,7 +338,7 @@ int CmdHF15Demod(const char *Cmd)
 			k++;
 			mask = 0x01;
 		}
-		if ((i + (int)arraylen(FrameEOF)) >= GraphTraceLen) {
+		if ((int)(i + arraylen(FrameEOF)) >= GraphTraceLen) {
 			PrintAndLog("ran off end!");
 			break;
 		}
@@ -361,7 +361,7 @@ int CmdHF15Demod(const char *Cmd)
 // * Acquire Samples as Reader (enables carrier, sends inquiry)
 int CmdHF15Read(const char *Cmd)
 {
-	UsbCommand c = {CMD_ACQUIRE_RAW_ADC_SAMPLES_ISO_15693};
+	UsbCommand c = {CMD_ACQUIRE_RAW_ADC_SAMPLES_ISO_15693, {0}, {{0}}};
 	SendCommand(&c);
 	return 0;
 }
@@ -369,7 +369,7 @@ int CmdHF15Read(const char *Cmd)
 // Record Activity without enabeling carrier
 int CmdHF15Record(const char *Cmd)
 {
-	UsbCommand c = {CMD_RECORD_RAW_ADC_SAMPLES_ISO_15693};
+	UsbCommand c = {CMD_RECORD_RAW_ADC_SAMPLES_ISO_15693, {0}, {{0}}};
 	SendCommand(&c);
 	return 0;
 }
@@ -390,7 +390,7 @@ int HF15Reader(const char *Cmd, bool verbose)
 
 int CmdHF15Reader(const char *Cmd)
 {
-	UsbCommand c = {CMD_READER_ISO_15693, {strtol(Cmd, NULL, 0), 0, 0}};
+	UsbCommand c = {CMD_READER_ISO_15693, {strtol(Cmd, NULL, 0), 0, 0}, {{0}}};
 	SendCommand(&c);
 	return 0;
 }
@@ -417,7 +417,7 @@ int CmdHF15Sim(const char *Cmd)
 	PrintAndLog("Starting simulating UID %02X %02X %02X %02X %02X %02X %02X %02X",
 			uid[0],uid[1],uid[2],uid[3],uid[4], uid[5], uid[6], uid[7]);
 
-	UsbCommand c = {CMD_SIMTAG_ISO_15693, {0, 0, 0}};
+	UsbCommand c = {CMD_SIMTAG_ISO_15693, {0}, {{0}}};
 	memcpy(c.d.asBytes,uid,8);
 	
 	SendCommand(&c);
@@ -428,7 +428,7 @@ int CmdHF15Sim(const char *Cmd)
 // (There is no standard way of reading the AFI, allthough some tags support this)
 int CmdHF15Afi(const char *Cmd)
 {
-	UsbCommand c = {CMD_ISO_15693_FIND_AFI, {strtol(Cmd, NULL, 0), 0, 0}};
+	UsbCommand c = {CMD_ISO_15693_FIND_AFI, {strtol(Cmd, NULL, 0), 0, 0}, {{0}}};
 	SendCommand(&c);
 	return 0;
 }
@@ -438,7 +438,7 @@ int CmdHF15DumpMem(const char*Cmd) {
 	UsbCommand resp;
 	uint8_t uid[8];	
 	uint8_t *recv=NULL;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0;
 	int blocknum=0;
@@ -471,11 +471,11 @@ int CmdHF15DumpMem(const char*Cmd) {
 					retry=0;
 					*output=0; // reset outputstring
 					sprintf(output, "Block %02x   ",blocknum);
-					for ( int i=1; i<resp.arg[0]-2; i++) { // data in hex
+					for (unsigned i=1; i<resp.arg[0]-2; i++) { // data in hex
 						sprintf(output+strlen(output),"%02X ",recv[i]);
 					}					
 					strcat(output,"   "); 
-					for ( int i=1; i<resp.arg[0]-2; i++) { // data in cleaned ascii
+					for (unsigned i=1; i<resp.arg[0]-2; i++) { // data in cleaned ascii
 						sprintf(output+strlen(output),"%c",(recv[i]>31 && recv[i]<127)?recv[i]:'.');					
 					}					
 					PrintAndLog("%s",output);	
@@ -535,7 +535,7 @@ int CmdHF15CmdInquiry(const char *Cmd)
 {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0;
 	
@@ -573,7 +573,7 @@ int CmdHF15CmdDebug( const char *cmd) {
 		return 0;
 	}
 
-	UsbCommand c = {CMD_ISO_15693_DEBUG, {debug, 0, 0}};
+	UsbCommand c = {CMD_ISO_15693_DEBUG, {debug, 0, 0}, {{0}}};
 	SendCommand(&c);
 	return 0;
 }
@@ -582,7 +582,7 @@ int CmdHF15CmdDebug( const char *cmd) {
 int CmdHF15CmdRaw (const char *cmd) {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	int reply=1;
 	int fast=1;	
 	int crc=0;
@@ -660,7 +660,7 @@ int CmdHF15CmdRaw (const char *cmd) {
 			PrintAndLog("received %i octets",resp.arg[0]);
 			hexout = (char *)malloc(resp.arg[0] * 3 + 1);
 			if (hexout != NULL) {
-				for (int i = 0; i < resp.arg[0]; i++) { // data in hex
+				for (unsigned i = 0; i < resp.arg[0]; i++) { // data in hex
 					sprintf(&hexout[i * 3], "%02X ", recv[i]);
 				}
 				PrintAndLog("%s", hexout);
@@ -776,13 +776,13 @@ int prepareHF15Cmd(char **cmd, UsbCommand *c, uint8_t iso15cmd[], int iso15cmdle
 int CmdHF15CmdSysinfo(const char *Cmd) {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0;
 	char cmdbuf[100];
 	char *cmd=cmdbuf;
 	char output[2048]="";
-	int i;
+	unsigned i;
 	
 	strncpy(cmd,Cmd,99);
 
@@ -864,7 +864,7 @@ int CmdHF15CmdSysinfo(const char *Cmd) {
 int CmdHF15CmdReadmulti(const char *Cmd) {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0, pagenum,pagecount;
 	char cmdbuf[100];
@@ -915,11 +915,11 @@ int CmdHF15CmdReadmulti(const char *Cmd) {
 		if (ISO15_CRC_CHECK==Crc(recv,resp.arg[0])) {
 			if (!(recv[0] & ISO15_RES_ERROR)) {
 				*output=0; // reset outputstring
-				for ( int i=1; i<resp.arg[0]-2; i++) {
+				for (unsigned i=1; i<resp.arg[0]-2; i++) {
 					sprintf(output+strlen(output),"%02X ",recv[i]);
 				}					
 				strcat(output,"   ");
-				for ( int i=1; i<resp.arg[0]-2; i++) {
+				for (unsigned i=1; i<resp.arg[0]-2; i++) {
 					sprintf(output+strlen(output),"%c",recv[i]>31 && recv[i]<127?recv[i]:'.');					
 				}					
 				PrintAndLog("%s",output);	
@@ -943,7 +943,7 @@ int CmdHF15CmdReadmulti(const char *Cmd) {
 int CmdHF15CmdRead(const char *Cmd) {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0, pagenum;
 	char cmdbuf[100];
@@ -989,11 +989,11 @@ int CmdHF15CmdRead(const char *Cmd) {
 			if (!(recv[0] & ISO15_RES_ERROR)) {
 				*output=0; // reset outputstring
 				//sprintf(output, "Block %2i   ",blocknum);
-				for ( int i=1; i<resp.arg[0]-2; i++) {
+				for (unsigned i=1; i<resp.arg[0]-2; i++) {
 					sprintf(output+strlen(output),"%02X ",recv[i]);
 				}					
 				strcat(output,"   ");
-				for ( int i=1; i<resp.arg[0]-2; i++) {
+				for (unsigned i=1; i<resp.arg[0]-2; i++) {
 					sprintf(output+strlen(output),"%c",recv[i]>31 && recv[i]<127?recv[i]:'.');					
 				}					
 				PrintAndLog("%s",output);	
@@ -1018,7 +1018,7 @@ int CmdHF15CmdRead(const char *Cmd) {
 int CmdHF15CmdWrite(const char *Cmd) {
 	UsbCommand resp;
 	uint8_t *recv;
-	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}, {{0}}}; // len,speed,recv?
 	uint8_t *req=c.d.asBytes;
 	int reqlen=0, pagenum, temp;
 	char cmdbuf[100];
