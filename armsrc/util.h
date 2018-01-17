@@ -27,6 +27,10 @@
 #define BUTTON_DOUBLE_CLICK -2
 #define BUTTON_ERROR -99
 
+#ifndef ARRAYLEN
+# define ARRAYLEN(x) (sizeof(x)/sizeof((x)[0]))
+#endif
+
 void print_result(char *name, uint8_t *buf, size_t len);
 size_t nbytes(size_t nbits);
 uint32_t SwapBits(uint32_t value, int nrbits);

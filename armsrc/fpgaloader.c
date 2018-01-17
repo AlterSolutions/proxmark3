@@ -573,3 +573,16 @@ void Fpga_print_status(void) {
 int FpgaGetCurrent() {
 	return downloaded_bitstream;
 }
+
+// Turns off the antenna,
+// log message
+// if HF,  Disable SSC DMA
+// turn off trace and leds off.
+
+void switch_off(void) {
+	FpgaWriteConfWord(FPGA_MAJOR_MODE_OFF);
+	if (downloaded_bitstream == FPGA_BITSTREAM_HF )
+		FpgaDisableSscDma();
+	set_tracing(false);
+	LEDsoff();
+}

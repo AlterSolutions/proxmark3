@@ -6,14 +6,7 @@
 // ISO15693 CRC & other commons
 //-----------------------------------------------------------------------------
 
-
-#include "proxmark3.h"
-#include <stdint.h>
-#include <stdlib.h>
-//#include "iso15693tools.h"
-
-#define POLY 0x8408
-
+#include "iso15693tools.h"
 
 // The CRC as described in ISO 15693-Part 3-Annex C
 // 	v	buffer with data
@@ -44,7 +37,7 @@ uint16_t Iso15693Crc(uint8_t *v, int n)
 //		n       length without crc
 // returns the new length of the dataframe.
 int Iso15693AddCrc(uint8_t *req, int n) {
-	uint16_t crc=Iso15693Crc(req,n);
+	uint16_t crc = Iso15693Crc(req, n);
 	req[n] = crc & 0xff;
 	req[n+1] = crc >> 8;
 	return n+2;
@@ -68,12 +61,15 @@ int sprintf(char *str, const char *format, ...);
 //		target    char* buffer, where to put the UID, if NULL a static buffer is returned
 //		uid[]		the UID in transmission order
 //	return: ptr to string
-char* Iso15693sprintUID(char *target,uint8_t *uid) {
-	static char tempbuf[2*8+1]="";
-	if (target==NULL)
-		target=tempbuf;
-	sprintf(target,"%02X%02X%02X%02X%02X%02X%02X%02X",
-			uid[7],uid[6],uid[5],uid[4],uid[3],uid[2],uid[1],uid[0]);
+char* Iso15693sprintUID(char *target, uint8_t *uid) {
+
+	static char tempbuf[2*8+1] = {0};
+	if (target == NULL)
+		target = tempbuf;
+	sprintf(target, "%02X %02X %02X %02X %02X %02X %02X %02X",
+			uid[7], uid[6], uid[5], uid[4],
+			uid[3], uid[2], uid[1], uid[0]
+	);
 	return target;
 }
 

@@ -28,6 +28,10 @@
 #define EVEN                        0
 #define ODD                         1
 
+#ifndef ARRAYLEN
+# define ARRAYLEN(x) (sizeof(x)/sizeof((x)[0]))
+#endif
+
 extern int ukbhit(void);
 
 extern void AddLogLine(char *fileName, char *extData, char *c);
