@@ -57,7 +57,6 @@
 //	*) remove or refactor code under "depricated"
 // *) document all the functions
 
-
 #include "proxmark3.h"
 #include "util.h"
 #include "apps.h"
@@ -77,10 +76,10 @@
 #define Logic1                Iso15693Logic1
 #define FrameEOF              Iso15693FrameEOF
 
-#define Crc(data,datalen)     Iso15693Crc(data,datalen)
-#define AddCrc(data,datalen)  Iso15693AddCrc(data,datalen)
+#define Crc(data,datalen)     Iso15693Crc(data, datalen)
+#define AddCrc(data,datalen)  Iso15693AddCrc(data, datalen)
 #define CheckCrc(data,datalen)  Iso15693CheckCrc(data,datalen)
-#define sprintUID(target,uid)	Iso15693sprintUID(target,uid)
+#define sprintUID(target,uid)	Iso15693sprintUID(target, uid)
 
 int DEBUG=0;
 
@@ -749,7 +748,7 @@ static void BuildIdentifyRequest(void)
 	cmd[2] = 0x00;
 	//Now the CRC
 	AddCrc(cmd, 3);
-
+	// coding as high speed (1 out of 4)
 	CodeIso15693AsReader(cmd, sizeof(cmd));
 }
 
@@ -867,7 +866,7 @@ int SendDataTag(uint8_t *send, int sendlen, int init, int speed, uint8_t **recv)
 // Decodes a message from a tag and displays its metadata and content
 #define DBD15STATLEN 48
 void DbdecodeIso15693Answer(int len, uint8_t *d) {
-	char status[DBD15STATLEN+1]={0};
+	char status[DBD15STATLEN+1] = {0};
 
 	if (len>3) {
 		if (d[0]&(1<<3)) 
@@ -877,44 +876,44 @@ void DbdecodeIso15693Answer(int len, uint8_t *d) {
 			strncat(status,"Error ",DBD15STATLEN);
 			switch (d[1]) {
 				case 0x01: 
-					strncat(status,"01:notSupp",DBD15STATLEN);
+					strncat(status, "01: not supported", DBD15STATLEN);
 					break;
 				case 0x02: 
-					strncat(status,"02:notRecog",DBD15STATLEN);
+					strncat(status, "02: not recognized", DBD15STATLEN);
 					break;
 				case 0x03: 
-					strncat(status,"03:optNotSupp",DBD15STATLEN);
+					strncat(status, "03: opt not supported", DBD15STATLEN);
 					break;
 				case 0x0f: 
-					strncat(status,"0f:noInfo",DBD15STATLEN);
+					strncat(status, "0F: no info", DBD15STATLEN);
 					break;
 				case 0x10: 
-					strncat(status,"10:dontExist",DBD15STATLEN);
+					strncat(status, "10: dont exist", DBD15STATLEN);
 					break;
 				case 0x11: 
-					strncat(status,"11:lockAgain",DBD15STATLEN);
+					strncat(status, "11: lock again", DBD15STATLEN);
 					break;
 				case 0x12: 
-					strncat(status,"12:locked",DBD15STATLEN);
+					strncat(status, "12: locked", DBD15STATLEN);
 					break;
 				case 0x13: 
-					strncat(status,"13:progErr",DBD15STATLEN);
+					strncat(status, "13: program error", DBD15STATLEN);
 					break;
 				case 0x14: 
-					strncat(status,"14:lockErr",DBD15STATLEN);
+					strncat(status, "14: lock error", DBD15STATLEN);
 					break;
 				default:
-					strncat(status,"unknownErr",DBD15STATLEN);
+					strncat(status, "unknown error", DBD15STATLEN);
 			}
 			strncat(status," ",DBD15STATLEN);
 		} else {
-			strncat(status,"NoErr ",DBD15STATLEN);
+			strncat(status ,"No error ", DBD15STATLEN);
 		}
 
 		if (CheckCrc(d,len))
-			strncat(status,"CrcOK",DBD15STATLEN);
+			strncat(status, "[+] crc OK", DBD15STATLEN);
 		else
-			strncat(status,"CrcFail!",DBD15STATLEN);
+			strncat(status, "[!] crc fail", DBD15STATLEN);
 
 		Dbprintf("%s",status);
 	}
@@ -927,8 +926,8 @@ void DbdecodeIso15693Answer(int len, uint8_t *d) {
 ///////////////////////////////////////////////////////////////////////
 
 void SetDebugIso15693(uint32_t debug) {
-	DEBUG=debug;
-	Dbprintf("Iso15693 Debug is now %s",DEBUG?"on":"off");
+	DEBUG = debug;
+	Dbprintf("[!] Iso15693 debug is %s", DEBUG ? "on" : "off");
 	return;
 }
 
