@@ -6,14 +6,7 @@
 // ISO15693 CRC & other commons
 //-----------------------------------------------------------------------------
 
-
-#include "proxmark3.h"
-#include <stdint.h>
-#include <stdlib.h>
-//#include "iso15693tools.h"
-
-#define POLY 0x8408
-
+#include "iso15693tools.h"
 
 // The CRC as described in ISO 15693-Part 3-Annex C
 // 	v	buffer with data
@@ -44,7 +37,7 @@ uint16_t Iso15693Crc(uint8_t *v, int n)
 //		n       length without crc
 // returns the new length of the dataframe.
 int Iso15693AddCrc(uint8_t *req, int n) {
-	uint16_t crc=Iso15693Crc(req,n);
+	uint16_t crc = Iso15693Crc(req, n);
 	req[n] = crc & 0xff;
 	req[n+1] = crc >> 8;
 	return n+2;
@@ -54,14 +47,12 @@ int Iso15693AddCrc(uint8_t *req, int n) {
 // 	v	buffer with data
 //	n	length (including crc)
 //	returns true if the crc is valid, else return false
-bool Iso15693CheckCrc(uint8_t *v, int n)
-{
-	uint16_t crc=Iso15693Crc(v, n-2);
+bool Iso15693CheckCrc(uint8_t *v, int n) {
+	uint16_t crc = Iso15693Crc(v, n-2);
 	if ( (( crc & 0xff ) == v[n-2]) && (( crc >> 8 ) == v[n-1]) )
 		return true;
 	return false;
 }
-
 
 int sprintf(char *str, const char *format, ...);
 
@@ -70,39 +61,38 @@ int sprintf(char *str, const char *format, ...);
 //		target    char* buffer, where to put the UID, if NULL a static buffer is returned
 //		uid[]		the UID in transmission order
 //	return: ptr to string
-char* Iso15693sprintUID(char *target,uint8_t *uid) {
-  static char tempbuf[2*8+1]="";
-  if (target==NULL) target=tempbuf;
-  sprintf(target,"%02X%02X%02X%02X%02X%02X%02X%02X",
-  				uid[7],uid[6],uid[5],uid[4],uid[3],uid[2],uid[1],uid[0]);
-  return target;
+char* Iso15693sprintUID(char *target, uint8_t *uid) {
+
+	static char tempbuf[2*8+1] = {0};
+	if (target == NULL)
+		target = tempbuf;
+	sprintf(target, "%02X %02X %02X %02X %02X %02X %02X %02X",
+			uid[7], uid[6], uid[5], uid[4],
+			uid[3], uid[2], uid[1], uid[0]
+	);
+	return target;
 }
 
-uint16_t iclass_crc16(char *data_p, unsigned short length)
-{
-      unsigned char i;
-      unsigned int data;
-	  uint16_t crc = 0xffff;
+uint16_t iclass_crc16(char *data_p, unsigned short length) {
+	unsigned char i;
+	unsigned int data;
+	uint16_t crc = 0xffff;
 
-      if (length == 0)
-            return (~crc);
+	if (length == 0)
+		return (~crc);
 
-      do
-      {
-            for (i=0, data=(unsigned int)0xff & *data_p++;
-                 i < 8; 
-                 i++, data >>= 1)
-            {
-                  if ((crc & 0x0001) ^ (data & 0x0001))
-                        crc = (crc >> 1) ^ POLY;
-                  else  crc >>= 1;
-            }
-      } while (--length);
+	do {
+		for (i=0, data = (unsigned int)0xff & *data_p++; i < 8;  i++, data >>= 1) {
+			if ((crc & 0x0001) ^ (data & 0x0001))
+				crc = (crc >> 1) ^ POLY;
+			else
+				crc >>= 1;
+		}
+	} while (--length);
 
-      crc = ~crc;
-      data = crc;
-      crc = (crc << 8) | (data >> 8 & 0xff);
-      crc = crc ^ 0xBC3;
-      return (crc);
+	crc = ~crc;
+	data = crc;
+	crc = (crc << 8) | (data >> 8 & 0xff);
+	crc = crc ^ 0xBC3;
+	return crc;
 }
-
