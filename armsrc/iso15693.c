@@ -227,7 +227,8 @@ static void TransmitTo15693Tag(const uint8_t *cmd, int len, int *samples, int *w
 	FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_READER_TX);
 
 	if (wait) {
-		if (*wait < 10) { *wait = 10; }
+// lnv42: waiting usualy induce some bugs so if wait is set to 0 : just don't wait
+//		if (*wait < 10) { *wait = 10; }
 		for (c = 0; c < *wait;) {
 			if (AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_TXRDY)) {
 				AT91C_BASE_SSC->SSC_THR = 0x00;		// For exact timing!
@@ -242,8 +243,6 @@ static void TransmitTo15693Tag(const uint8_t *cmd, int len, int *samples, int *w
 
     c = 0;
     for(;;) {
-        WDT_HIT();
-
 		if (AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_TXRDY)) {
             AT91C_BASE_SSC->SSC_THR = cmd[c];
             if( ++c >= len) break;
@@ -251,6 +250,7 @@ static void TransmitTo15693Tag(const uint8_t *cmd, int len, int *samples, int *w
         if (AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_RXRDY)) {
             r = AT91C_BASE_SSC->SSC_RHR; (void)r;
         }
+		WDT_HIT();
     }
 
 	if (samples) {
@@ -270,7 +270,8 @@ static void TransmitTo15693Reader(const uint8_t *cmd, int len, int *samples, int
 	FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_SIMULATOR|FPGA_HF_SIMULATOR_MODULATE_424K);
 
 	if (wait) {
-		if (*wait < 10) { *wait = 10; }
+// lnv42: waiting usualy induce some bugs so if wait is set to 0 : just don't wait
+//		if (*wait < 10) { *wait = 10; }
 		for (c = 0; c < *wait;) {
 			if (AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_TXRDY)) {
 				AT91C_BASE_SSC->SSC_THR = 0x00;		// For exact timing!
@@ -285,7 +286,6 @@ static void TransmitTo15693Reader(const uint8_t *cmd, int len, int *samples, int
 
     c = 0;
     for(;;) {
-        WDT_HIT();
 		if(AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_TXRDY)) {
             AT91C_BASE_SSC->SSC_THR = cmd[c];
             if( ++c >= len) break;
@@ -293,6 +293,7 @@ static void TransmitTo15693Reader(const uint8_t *cmd, int len, int *samples, int
         if(AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_RXRDY)) {
             r = AT91C_BASE_SSC->SSC_RHR; (void)r;
         }
+		WDT_HIT();
     }
 	if (samples) {
 		if (wait)
