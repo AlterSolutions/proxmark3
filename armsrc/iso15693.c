@@ -91,7 +91,7 @@ bool LogTrace_ISO15693(const uint8_t *btBytes, uint16_t iLen, uint32_t timestamp
 
 // buffers
 #define ISO15693_DMA_BUFFER_SIZE       2048 // must be a power of 2
-#define ISO15693_MAX_RESPONSE_LENGTH     36 // allows read single block with the maximum block size of 256bits. Read multiple blocks not supported yet
+#define ISO15693_MAX_RESPONSE_LENGTH   2052 // allows read multiple block with the maximum block size of 256bits and a maximum block number of 64.
 #define ISO15693_MAX_COMMAND_LENGTH      45 // allows write single block with the maximum block size of 256bits. Write multiple blocks not supported yet
 
 // ---------------------------
@@ -1316,7 +1316,7 @@ static void BuildReadBlockRequest(uint8_t *uid, uint8_t blockNumber )
 	CodeIso15693AsReader(cmd, sizeof(cmd));
 }
 
-
+/*
 // Now the VICC>VCD responses when we are simulating a tag
 static void BuildInventoryResponse(uint8_t *uid)
 {
@@ -1342,7 +1342,7 @@ static void BuildInventoryResponse(uint8_t *uid)
 
 	CodeIso15693AsTag(cmd, sizeof(cmd));
 }
-
+*/
 // Universal Method for sending to and recv bytes from a tag
 //  init ... should we initialize the reader?
 //  speed ... 0 low speed, 1 hi speed
@@ -1554,9 +1554,20 @@ void ReaderIso15693(uint32_t parameter) {
 
 
 // Simulate an ISO15693 TAG.
-// For Inventory command: print command and send Inventory Response with given UID
-// TODO: interpret other reader commands and send appropriate response
+// Tag Data and infos are taken from emulator memory
+// Support all basic ISO15693 commands currently (11/2019) defined in common/protocols.h
+// TODO: Add support for INVENTORY variants and colision avoidances
+// TODO: Add support for SUBCARRIER_TWO and PROTOCOL_EXT
 void SimTagIso15693(uint32_t parameter, uint8_t *uid) {
+	bool highRate = false;
+	bool selected = false;
+	bool quiet = false;
+	int cmd_len = 0;
+	uint8_t error = 0;
+	uint16_t crc = 0;
+	uint32_t recvLen = 0;
+	uint32_t cpt = 0, pageNum = 0, nbPages = 0;
+	uint32_t eof_time = 0, start_time = 0;
 
 	LED_A_ON();
 
@@ -1565,26 +1576,294 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid) {
 	FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_SIMULATOR | FPGA_HF_SIMULATOR_NO_MODULATION);
 	FpgaSetupSsc(FPGA_MAJOR_MODE_HF_SIMULATOR);
 
+	uint8_t cmd[ISO15693_MAX_COMMAND_LENGTH];
+	uint8_t recv[ISO15693_MAX_RESPONSE_LENGTH] = {0};
+	uint8_t *tag = BigBuf_get_EM_addr();
+	uint8_t *tagUid = tag;
+	uint8_t *tagDSFID = tagUid+8;
+	uint8_t *tagDSFIDLock = tagDSFID+1;
+	uint8_t *tagAFI = tagDSFIDLock+1;
+	uint8_t *tagAFILock = tagAFI+1;
+	uint8_t *tagBpP = tagAFILock+1; // Byte/Page
+	uint8_t *tagPages = tagBpP+1;
+	uint8_t *tagIC = tagPages+1;
+	uint8_t *tagLocks = tagIC+1;
+	uint8_t *tagData = tagLocks+1 + *tagPages;
+
 	StartCountSspClk();
 
-	uint8_t cmd[ISO15693_MAX_COMMAND_LENGTH];
-
-	// Build a suitable response to the reader INVENTORY command
-	BuildInventoryResponse(uid);
-
 	// Listen to reader
-	while (!BUTTON_PRESS()) {
-		uint32_t eof_time = 0, start_time = 0;
-		int cmd_len = GetIso15693CommandFromReader(cmd, sizeof(cmd), &eof_time);
+	while (!BUTTON_PRESS())
+	{
+		error = 0;
+		eof_time = 0;
+		// Listen to reader
+		cmd_len = GetIso15693CommandFromReader(cmd, sizeof(cmd), &eof_time);
+		start_time = eof_time + DELAY_ISO15693_VCD_TO_VICC_SIM;
 
-		if ((cmd_len >= 5) && (cmd[0] & ISO15693_REQ_INVENTORY) && (cmd[1] == ISO15693_INVENTORY)) { // TODO: check more flags
-			bool slow = !(cmd[0] & ISO15693_REQ_DATARATE_HIGH);
-			start_time = eof_time + DELAY_ISO15693_VCD_TO_VICC_SIM;
-			TransmitTo15693Reader(ToSend, ToSendMax, &start_time, 0, slow);
+		cmd[cmd_len] = 0;
+
+		if (DEBUG)
+		{
+			Dbprintf("%d bytes read from reader:", cmd_len);
+			Dbhexdump(cmd_len, cmd, false);
 		}
 
-		Dbprintf("%d bytes read from reader:", cmd_len);
-		Dbhexdump(cmd_len, cmd, false);
+		if (cmd_len <= 3)
+			continue;
+
+		crc=Iso15693Crc(cmd,cmd_len-2);
+		if ((( crc & 0xff ) != cmd[cmd_len-2]) || (( crc >> 8 ) != cmd[cmd_len-1]))
+		{
+			if (DEBUG) Dbprintf("CrcFail!");
+			continue;
+		}
+		else if (DEBUG)
+			Dbprintf("CrcOK");
+
+		recvLen = 0;
+
+		if (cmd[0]&ISO15693_REQ_SUBCARRIER_TWO)
+			Dbprintf("ISO15693_REQ_SUBCARRIER_TWO not supported!");
+		if (cmd[0]&ISO15693_REQ_PROTOCOL_EXT)
+			Dbprintf("ISO15693_REQ_PROTOCOL_EXT not supported!");
+
+		if (cmd[0]&ISO15693_REQ_DATARATE_HIGH)
+			highRate = true;
+		else
+			highRate = false;
+
+		if (cmd[0]&ISO15693_REQ_INVENTORY && !quiet)
+		{
+			// TODO : support REQINV_AFI && REQINV_SLOT1 flags
+			// TODO : support colision avoidances
+			if (DEBUG) Dbprintf("Inventory req");
+			recv[0] = ISO15693_NOERROR;
+			recv[1] = *tagDSFID;
+			memcpy(&recv[2], tagUid, 8);
+			recvLen = 10;
+		}
+		else
+		{
+			if (cmd[0]&ISO15693_REQ_SELECT)
+			{
+				if (DEBUG) Dbprintf("Selected Request");
+				if (!selected)
+					continue; // drop selected request if not selected
+				selected = false; // Select flag set if already selected : unselect
+			}
+
+			cpt = 2;
+			if (cmd[0]&ISO15693_REQ_ADDRESS)
+			{
+				if (DEBUG) Dbprintf("Addressed Request");
+				if (memcmp(&cmd[2], tagUid, 8) != 0)
+				{
+					if (DEBUG) Dbprintf("Address don't match tag uid");
+					if (cmd[1] == ISO15693_SELECT)
+						selected = false; // we are not anymore the selected TAG
+					continue; // drop addressed request with other uid
+				}
+				if (DEBUG) Dbprintf("Address match tag uid");
+				cpt+=8;
+			}
+			else if (quiet)
+			{
+				if (DEBUG) Dbprintf("Unaddressed request in quit state : drop");
+				continue; // drop unadressed request in quiet state
+			}
+
+			// we have to answer this
+			switch(cmd[1])
+			{
+			case ISO15693_INVENTORY:
+				if (DEBUG) Dbprintf("Inventory cmd");
+				recv[0] = ISO15693_NOERROR;
+				recv[1] = *tagDSFID;
+				memcpy(&recv[2], tagUid, 8);
+				recvLen = 10;
+				break;
+			case ISO15693_STAYQUIET:
+				if (DEBUG) Dbprintf("StayQuiet cmd");
+				quiet = true;
+				break;
+			case ISO15693_READBLOCK:
+				if (DEBUG) Dbprintf("ReadBlock cmd");
+				pageNum = cmd[cpt++];
+				if (pageNum >= *tagPages)
+					error = ISO15693_ERROR_BLOCK_UNAVAILABLE;
+				else
+				{
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+					if ((cmd[0]&ISO15693_REQ_OPTION)) // ask for lock status
+					{
+						recv[1] = tagLocks[pageNum];
+						recvLen++;
+					}
+					for (unsigned i = 0 ; i < *tagBpP ; i++)
+						recv[recvLen+i] = tagData[(pageNum*(*tagBpP)) + i];
+					recvLen += *tagBpP;
+				}
+				break;
+			case ISO15693_WRITEBLOCK:
+				if (DEBUG) Dbprintf("WriteBlock cmd");
+				pageNum = cmd[cpt++];
+				if (pageNum >= *tagPages)
+					error = ISO15693_ERROR_BLOCK_UNAVAILABLE;
+				else
+				{
+					for (unsigned i = 0 ; i < *tagBpP ; i++)
+						tagData[(pageNum*(*tagBpP)) + i] = cmd[i+cpt];
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+				}
+				break;
+			case ISO15693_LOCKBLOCK:
+				if (DEBUG) Dbprintf("LockBlock cmd");
+				pageNum = cmd[cpt++];
+				if (pageNum >= *tagPages)
+					error = ISO15693_ERROR_BLOCK_UNAVAILABLE;
+				else if (tagLocks[pageNum])
+					error = ISO15693_ERROR_BLOCK_LOCKED_ALREADY;
+				else
+				{
+					tagLocks[pageNum] = 1;
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+				}
+				break;
+			case ISO15693_READ_MULTI_BLOCK:
+				if (DEBUG) Dbprintf("ReadMultiBlock cmd");
+				pageNum = cmd[cpt++];
+				nbPages = cmd[cpt++];
+				if (pageNum+nbPages >= *tagPages)
+					error = ISO15693_ERROR_BLOCK_UNAVAILABLE;
+				else
+				{
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+					for (unsigned i = 0 ; i < (nbPages+1) * *tagBpP && \
+							 i+4 < ISO15693_MAX_RESPONSE_LENGTH ; i++)
+						recv[recvLen+i] = tagData[(pageNum*(*tagBpP)) + i];
+					recvLen += (nbPages+1) * *tagBpP;
+					if (recvLen+3 > ISO15693_MAX_RESPONSE_LENGTH) // limit response size
+						recvLen = ISO15693_MAX_RESPONSE_LENGTH-3; // to avoid overflow
+				}
+				break;
+			case ISO15693_WRITE_AFI:
+				if (DEBUG) Dbprintf("WriteAFI cmd");
+				if (*tagAFILock)
+					error = ISO15693_ERROR_BLOCK_LOCKED;
+				else
+				{
+					*tagAFI = cmd[cpt++];
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+				}
+				break;
+			case ISO15693_LOCK_AFI:
+				if (DEBUG) Dbprintf("LockAFI cmd");
+				if (*tagAFILock)
+					error = ISO15693_ERROR_BLOCK_LOCKED_ALREADY;
+				else
+				{
+					*tagAFILock = 1;
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+				}
+				break;
+			case ISO15693_WRITE_DSFID:
+				if (DEBUG) Dbprintf("WriteDSFID cmd");
+				if (*tagDSFIDLock)
+					error = ISO15693_ERROR_BLOCK_LOCKED;
+				else
+				{
+					*tagDSFID = cmd[cpt++];
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+				}
+				break;
+			case ISO15693_LOCK_DSFID:
+				if (DEBUG) Dbprintf("LockDSFID cmd");
+				if (*tagDSFIDLock)
+					error = ISO15693_ERROR_BLOCK_LOCKED_ALREADY;
+				else
+				{
+					*tagDSFIDLock = 1;
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+				}
+				break;
+			case ISO15693_SELECT:
+				if (DEBUG) Dbprintf("Select cmd");
+				selected = true;
+				quiet = false;
+				recv[0] = ISO15693_NOERROR;
+				recvLen = 1;
+				break;
+			case ISO15693_RESET_TO_READY:
+				if (DEBUG) Dbprintf("ResetToReady cmd");
+				quiet = false;
+				selected = false;
+				recv[0] = ISO15693_NOERROR;
+				recvLen = 1;
+				break;
+			case ISO15693_GET_SYSTEM_INFO:
+				if (DEBUG) Dbprintf("GetSystemInfo cmd");
+				recv[0] = ISO15693_NOERROR;
+				recv[1] = 0x0f; // ?
+				memcpy(&recv[2], tagUid, 8);
+				recv[10] = *tagDSFID;
+				recv[11] = *tagAFI;
+				recv[12] = *tagPages-1;
+				recv[13] = *tagBpP-1;
+				recv[14] = *tagIC;
+				recvLen = 15;
+				break;
+			case ISO15693_READ_MULTI_SECSTATUS:
+				if (DEBUG) Dbprintf("ReadMultiSecStatus cmd");
+				pageNum = cmd[cpt++];
+				nbPages = cmd[cpt++];
+				if (pageNum+nbPages >= *tagPages)
+					error = ISO15693_ERROR_BLOCK_UNAVAILABLE;
+				else
+				{
+					recv[0] = ISO15693_NOERROR;
+					recvLen = 1;
+					for (unsigned i = 0 ; i < nbPages+1 ; i++)
+						recv[recvLen+i] = tagLocks[pageNum + i];
+					recvLen += nbPages + 1;
+				}
+				break;
+
+			default:
+				Dbprintf("ISO15693 CMD 0x%2X not supported", cmd[1]);
+
+				error = ISO15693_ERROR_CMD_NOT_SUP;
+				break;
+			}
+		}
+
+		if (error != 0)
+		{
+			recv[0] = ISO15693_RES_ERROR;
+			recv[1] = error;
+			recvLen = 2;
+			if (DEBUG) Dbprintf("ERROR 0x%2X in received request", error);
+		}
+
+		if (recvLen > 0)
+		{
+			recvLen = Iso15693AddCrc(recv, recvLen);
+			if (DEBUG)
+			{
+				Dbprintf("%d bytes to write to reader:", recvLen);
+				Dbhexdump(recvLen, recv, false);
+			}
+			CodeIso15693AsTag(recv, recvLen);
+			TransmitTo15693Reader(ToSend,ToSendMax, &start_time, 0, !highRate);
+		}
 	}
 
 	FpgaWriteConfWord(FPGA_MAJOR_MODE_OFF);
