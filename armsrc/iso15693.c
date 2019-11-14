@@ -1635,9 +1635,11 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid) {
 
 		if (cmd[0]&ISO15693_REQ_INVENTORY && !quiet)
 		{
-			// TODO : support REQINV_AFI && REQINV_SLOT1 flags
+			// TODO : support REQINV_SLOT1 flags
 			// TODO : support colision avoidances
 			if (DEBUG) Dbprintf("Inventory req");
+            if (cmd[0]&ISO15693_REQINV_AFI && cmd[2] != *tagAFI && cmd[2] != 0)
+                continue; // bad AFI : drop request
 			recv[0] = ISO15693_NOERROR;
 			recv[1] = *tagDSFID;
 			memcpy(&recv[2], tagUid, 8);
