@@ -2,7 +2,7 @@
 //
 // piwi, Feb 2019
 //-----------------------------------------------------------------------------
-
+/*
 module hi_get_trace(
        ck_1356megb,
        adc_d, trace_enable, major_mode,
@@ -153,3 +153,4 @@ end
 assign ssp_din = shift_out[7];
 
 endmodule
+*/

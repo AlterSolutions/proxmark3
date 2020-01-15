@@ -154,12 +154,13 @@ hi_sniffer he(
 	adc_d, he_adc_clk,
 	he_ssp_frame, he_ssp_din, he_ssp_clk
 );
-
+/*
 hi_get_trace gt(
 	ck_1356megb,
 	adc_d, trace_enable, major_mode,
 	gt_ssp_frame, gt_ssp_din, gt_ssp_clk
-
+);
+*/
 hi_read_fsk hrf(
     ck_1356meg,
     hrf_pwr_lo, hrf_pwr_hi, hrf_pwr_oe1, hrf_pwr_oe2, hrf_pwr_oe3, hrf_pwr_oe4,
