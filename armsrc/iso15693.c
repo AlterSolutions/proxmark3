@@ -709,6 +709,330 @@ int GetIso15693AnswerFromTag(uint8_t* response, uint16_t max_len, uint16_t timeo
 	return DecodeTag.len;
 }
 
+//=============================================================================
+// An ISO 15693 decoder for tag responses in FSK (two subcarriers) mode.
+// Subcarriers frequencies are 424kHz and 484kHz (fc/32 and fc/28),
+// LED handling:
+//    LED C -> ON once we have received the SOF and are expecting the rest.
+//    LED C -> OFF once we have received EOF or are unsynced
+//
+// Returns: true if we received a EOF
+//          false if we are still waiting for some more
+//=============================================================================
+
+#define FREQ_IS_484(f)  ((f >= 26 && f <= 30) ? true : false)
+#define FREQ_IS_424(f)  ((f >= 30 && f <= 34) ? true : false)
+#define SEOF_COUNT(c)   ((c >= 22 && c <= 26) ? true : false)
+#define LOGIC_COUNT(c)  ((c >= 6 && c <= 11) ? true : false)
+#define MAX_COUNT(c)    ((c > 30) ? true : false)
+#define MIN_COUNT(c)    ((c < 4) ? true : false)
+
+typedef struct DecodeTagFSK {
+	enum {
+		STATE_FSK_BEFORE_SOF,
+		STATE_FSK_SOF_484,
+		STATE_FSK_SOF_424,
+		STATE_FSK_SOF_END,
+		STATE_FSK_RECEIVING_DATA_484,
+		STATE_FSK_RECEIVING_DATA_424,
+		STATE_FSK_EOF,
+		STATE_FSK_ERROR
+	}        state;
+	enum {
+		LOGIC0_PART1,
+		LOGIC0_PART2,
+		LOGIC1_PART1,
+		LOGIC1_PART2,
+		SOF
+	}        lastBit;
+	uint8_t  count;
+	uint8_t  bitCount;
+	uint8_t  shiftReg;
+	uint16_t len;
+	uint16_t max_len;
+	uint8_t  *output;
+} DecodeTagFSK_t;
+
+static void DecodeTagFSKReset(DecodeTagFSK_t *DecodeTag) {
+	DecodeTag->state = STATE_FSK_BEFORE_SOF;
+	DecodeTag->bitCount = 0;
+	DecodeTag->len = 0;
+	DecodeTag->shiftReg = 0;
+}
+
+static void DecodeTagFSKInit(DecodeTagFSK_t *DecodeTag, uint8_t *data, uint16_t max_len) {
+	DecodeTag->output = data;
+	DecodeTag->max_len = max_len;
+	DecodeTagFSKReset(DecodeTag);
+}
+
+static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(uint8_t freq, DecodeTagFSK_t *DecodeTag)
+{
+	switch(DecodeTag->state) {
+		case STATE_FSK_BEFORE_SOF:
+			if (FREQ_IS_484(freq))
+			{ // possible SOF starting
+				DecodeTag->state = STATE_FSK_SOF_484;
+				DecodeTag->lastBit = LOGIC0_PART1;
+				DecodeTag->count = 1;
+			}
+			break;
+
+		case STATE_FSK_SOF_484:
+			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count)) // still in SOF at 484
+				DecodeTag->count++;
+			else if (FREQ_IS_424(freq) && SEOF_COUNT(DecodeTag->count))
+			{ // SOF part1 continue at 424
+				DecodeTag->state = STATE_FSK_SOF_424;
+				DecodeTag->count = 1;
+			}
+			else // SOF failed, roll back
+				DecodeTag->state = STATE_FSK_BEFORE_SOF;
+			break;
+
+		case STATE_FSK_SOF_424:
+			if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count)) // still in SOF at 424
+				DecodeTag->count++;
+			else if (FREQ_IS_484(freq) && SEOF_COUNT(DecodeTag->count))
+			{ // SOF part 1 finished
+				DecodeTag->state = STATE_FSK_SOF_END;
+				DecodeTag->count = 1;
+			}
+			else // SOF failed, roll back
+				DecodeTag->state = STATE_FSK_BEFORE_SOF;
+			break;
+
+		case STATE_FSK_SOF_END:
+			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count))  // still in SOF_END (484)
+				DecodeTag->count++;
+			else if (FREQ_IS_424(freq) && LOGIC_COUNT(DecodeTag->count))
+			{ // SOF END finished or SOF END 1st part finished
+				DecodeTag->count = 0;
+				if (DecodeTag->lastBit == SOF)
+				{ // SOF finished at 424
+					DecodeTag->state = STATE_FSK_RECEIVING_DATA_424;
+					LED_C_ON();
+				}
+				DecodeTag->lastBit = SOF;
+			}
+			else if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count)) // still in SOF_END (424)
+				DecodeTag->count++;
+			else if (DecodeTag->lastBit == SOF && FREQ_IS_484(freq) &&
+					 LOGIC_COUNT(DecodeTag->count))
+			{ // SOF finished at 484
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
+				DecodeTag->count = 1;
+				LED_C_ON();
+			}
+			else // SOF failed, roll back
+				DecodeTag->state = STATE_FSK_BEFORE_SOF;
+			break;
+
+
+		case STATE_FSK_RECEIVING_DATA_424:
+			if (DecodeTag->lastBit == LOGIC1_PART1 && LOGIC_COUNT(DecodeTag->count))
+			{ // logic 1 finished
+				DecodeTag->lastBit = LOGIC1_PART2;
+				DecodeTag->count = 0;
+
+				DecodeTag->shiftReg >>= 1;
+				DecodeTag->shiftReg |= 0x80;
+				DecodeTag->bitCount++;
+				if (DecodeTag->bitCount == 8) {
+					DecodeTag->output[DecodeTag->len++] = DecodeTag->shiftReg;
+					if (DecodeTag->len > DecodeTag->max_len) {
+						// buffer overflow, give up
+						LED_C_OFF();
+						return true;
+					}
+					DecodeTag->bitCount = 0;
+					DecodeTag->shiftReg = 0;
+				}
+			}
+			else if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count)) // still at 424
+				DecodeTag->count++;
+			else if (FREQ_IS_484(freq) && MIN_COUNT(DecodeTag->count))
+			{ // it was just the end of the previous block
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
+			}
+			else if (FREQ_IS_484(freq) && LOGIC_COUNT(DecodeTag->count) &&
+					 (DecodeTag->lastBit == LOGIC0_PART2 ||
+					  DecodeTag->lastBit == LOGIC1_PART2 ||
+					  DecodeTag->lastBit == SOF ))
+			{ // end of LOGIC0_PART1
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
+				DecodeTag->lastBit = LOGIC0_PART1;
+			}
+			else if (FREQ_IS_484(freq) && DecodeTag->lastBit == LOGIC0_PART2 &&
+					 SEOF_COUNT(DecodeTag->count))
+			{ // EOF has started
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_EOF;
+				LED_C_OFF();
+			}
+			else // error
+			{
+				DecodeTag->state = STATE_FSK_ERROR;
+				LED_C_OFF();
+				return true;
+			}
+			break;
+
+		case STATE_FSK_RECEIVING_DATA_484:
+			if (DecodeTag->lastBit == LOGIC0_PART1 && LOGIC_COUNT(DecodeTag->count))
+			{ // logic 0 finished
+				DecodeTag->lastBit = LOGIC0_PART2;
+				DecodeTag->count = 0;
+
+				DecodeTag->shiftReg >>= 1;
+				DecodeTag->bitCount++;
+				if (DecodeTag->bitCount == 8) {
+					DecodeTag->output[DecodeTag->len++] = DecodeTag->shiftReg;
+					if (DecodeTag->len > DecodeTag->max_len) {
+						// buffer overflow, give up
+						LED_C_OFF();
+						return true;
+					}
+					DecodeTag->bitCount = 0;
+					DecodeTag->shiftReg = 0;
+				}
+			}
+			else if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count)) // still at 484
+				DecodeTag->count++;
+			else if (FREQ_IS_424(freq) && MIN_COUNT(DecodeTag->count))
+			{ // it was just the end of the previous block
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_424;
+			}
+			else if (FREQ_IS_424(freq) && LOGIC_COUNT(DecodeTag->count) &&
+					 (DecodeTag->lastBit == LOGIC0_PART2 ||
+					  DecodeTag->lastBit == LOGIC1_PART2 ||
+					  DecodeTag->lastBit == SOF ))
+			{ // end of LOGIC1_PART1
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_424;
+				DecodeTag->lastBit = LOGIC1_PART1;
+			}
+			else // error
+			{
+				LED_C_OFF();
+				DecodeTag->state = STATE_FSK_ERROR;
+				return true;
+			}
+			break;
+
+		case STATE_FSK_EOF:
+			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count)) // still at 484
+			{
+				DecodeTag->count++;
+				if (SEOF_COUNT(DecodeTag->count))
+					return true; // end of the transmission
+			}
+			else // error
+			{
+				DecodeTag->state = STATE_FSK_ERROR;
+				return true;
+			}
+			break;
+		case STATE_FSK_ERROR:
+			LED_C_OFF();
+			return true; // error
+			break;
+	}
+	return false;
+}
+
+int GetIso15693AnswerFromTagFSK(uint8_t* response, uint16_t max_len, uint16_t timeout, uint32_t *eof_time) {
+
+	int samples = 0;
+	int ret = 0;
+
+	uint8_t dmaBuf[ISO15693_DMA_BUFFER_SIZE];
+
+	// the Decoder data structure
+	DecodeTagFSK_t DecodeTag = { 0 };
+	DecodeTagFSKInit(&DecodeTag, response, max_len);
+
+	// wait for last transfer to complete
+	while (!(AT91C_BASE_SSC->SSC_SR & AT91C_SSC_TXEMPTY));
+
+	// And put the FPGA in the appropriate mode
+	FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_FSK_READER | FPGA_HF_FSK_READER_OUTPUT_424_KHZ);
+
+	// Setup and start DMA.
+	FpgaSetupSsc(FPGA_MAJOR_MODE_HF_FSK_READER);
+	FpgaSetupSscDma((uint8_t*) dmaBuf, ISO15693_DMA_BUFFER_SIZE);
+	uint32_t dma_start_time = 0;
+	uint8_t *upTo = dmaBuf;
+
+	for(;;) {
+		uint8_t behindBy = ((uint8_t*)AT91C_BASE_PDC_SSC->PDC_RPR - upTo) & (ISO15693_DMA_BUFFER_SIZE-1);
+
+		if (behindBy == 0) continue;
+
+		samples++;
+		if (samples == 1) {
+			// DMA has transferred the very first data
+			dma_start_time = GetCountSspClk() & 0xfffffff0;
+		}
+
+		uint8_t tagdata = *upTo++;
+
+		if(upTo >= dmaBuf + ISO15693_DMA_BUFFER_SIZE) {                // we have read all of the DMA buffer content.
+			upTo = dmaBuf;                                             // start reading the circular buffer from the beginning
+			if(behindBy > (9*ISO15693_DMA_BUFFER_SIZE/10)) {
+				Dbprintf("About to blow circular buffer - aborted! behindBy=%d", behindBy);
+				ret = -1;
+				break;
+			}
+		}
+		if (AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_ENDRX)) {              // DMA Counter Register had reached 0, already rotated.
+			AT91C_BASE_PDC_SSC->PDC_RNPR = (uint32_t) dmaBuf;          // refresh the DMA Next Buffer and
+			AT91C_BASE_PDC_SSC->PDC_RNCR = ISO15693_DMA_BUFFER_SIZE;   // DMA Next Counter registers
+		}
+
+		if (Handle15693FSKSamplesFromTag(tagdata, &DecodeTag)) {
+			*eof_time = dma_start_time + samples*16 - DELAY_TAG_TO_ARM; // end of EOF
+			if (DecodeTag.lastBit == SOF) {
+				*eof_time -= 8*16; // needed 8 additional samples to confirm single SOF (iCLASS)
+			}
+			if (DecodeTag.len > DecodeTag.max_len) {
+				ret = -2; // buffer overflow
+			}
+			break;
+		}
+
+		if (samples > timeout && DecodeTag.state < STATE_FSK_RECEIVING_DATA_484) {
+			ret = -1;   // timeout
+			break;
+		}
+	}
+
+	FpgaDisableSscDma();
+
+	if (DEBUG) Dbprintf("samples = %d, ret = %d, Decoder: state = %d, lastBit = %d, len = %d, bitCount = %d, count = %d",
+						samples, ret, DecodeTag.state, DecodeTag.lastBit, DecodeTag.len, DecodeTag.bitCount, DecodeTag.count);
+
+	if (ret < 0) {
+		return ret;
+	}
+
+	uint32_t sof_time = *eof_time
+						- DecodeTag.len * 8 * 8 * 16 // time for byte transfers
+						- 32 * 16  // time for SOF transfer
+						- (DecodeTag.lastBit != SOF?32*16:0); // time for EOF transfer
+
+	if (DEBUG) Dbprintf("timing: sof_time = %d, eof_time = %d", sof_time, *eof_time);
+
+	LogTrace_ISO15693(DecodeTag.output, DecodeTag.len, sof_time*4, *eof_time*4, NULL, false);
+
+	return DecodeTag.len;
+
+	return 1;
+}
+
 
 //=============================================================================
 // An ISO15693 decoder for reader commands.
@@ -1357,6 +1681,10 @@ int SendDataTag(uint8_t *send, int sendlen, bool init, int speed, uint8_t *recv,
 
 	int answerLen = 0;
 
+	bool fsk = false;
+	if (send[0]&ISO15693_REQ_SUBCARRIER_TWO)
+		fsk = true;
+
 	if (!speed) {
 		// low speed (1 out of 256)
 		CodeIso15693AsReader256(send, sendlen);
@@ -1369,7 +1697,10 @@ int SendDataTag(uint8_t *send, int sendlen, bool init, int speed, uint8_t *recv,
 
 	// Now wait for a response
 	if (recv != NULL) {
-		answerLen = GetIso15693AnswerFromTag(recv, max_recv_len, ISO15693_READER_TIMEOUT, eof_time);
+		if (fsk)
+			answerLen = GetIso15693AnswerFromTagFSK(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time);
+		else
+			answerLen = GetIso15693AnswerFromTag(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time);
 	}
 
 	return answerLen;
