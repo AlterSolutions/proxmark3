@@ -54,6 +54,7 @@ void SetAdcMuxFor(uint32_t whichGpio);
 #define FPGA_MAJOR_MODE_HF_ISO14443A                (2<<5)
 #define FPGA_MAJOR_MODE_HF_SNOOP                    (3<<5)
 #define FPGA_MAJOR_MODE_HF_GET_TRACE                (4<<5)
+#define FPGA_MAJOR_MODE_HF_FSK_READER               (5<<5)
 // BOTH
 #define FPGA_MAJOR_MODE_OFF                         (7<<5)
 
@@ -78,6 +79,11 @@ void SetAdcMuxFor(uint32_t whichGpio);
 #define FPGA_HF_READER_SUBCARRIER_848_KHZ           (0<<3)
 #define FPGA_HF_READER_SUBCARRIER_424_KHZ           (1<<3)
 #define FPGA_HF_READER_SUBCARRIER_212_KHZ           (2<<3)
+
+#define FPGA_HF_FSK_READER_OUTPUT_1695_KHZ          (0<<0)
+#define FPGA_HF_FSK_READER_OUTPUT_848_KHZ           (1<<0)
+#define FPGA_HF_FSK_READER_OUTPUT_424_KHZ           (2<<0)
+#define FPGA_HF_FSK_READER_OUTPUT_212_KHZ           (3<<0)
 
 // Options for the HF simulated tag, how to modulate
 #define FPGA_HF_SIMULATOR_NO_MODULATION             (0<<0)

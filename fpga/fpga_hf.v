@@ -24,6 +24,7 @@
 `define FPGA_MAJOR_MODE_HF_ISO14443A                2
 `define FPGA_MAJOR_MODE_HF_SNOOP                    3
 `define FPGA_MAJOR_MODE_HF_GET_TRACE                4
+`define FPGA_MAJOR_MODE_HF_FSK_READER               5
 `define FPGA_MAJOR_MODE_OFF                         7
 
 // Options for the generic HF reader
@@ -38,6 +39,10 @@
 `define FPGA_HF_READER_SUBCARRIER_848_KHZ           0
 `define FPGA_HF_READER_SUBCARRIER_424_KHZ           1
 `define FPGA_HF_READER_SUBCARRIER_212_KHZ           2
+`define FPGA_HF_FSK_READER_OUTPUT_1695_KHZ          0
+`define FPGA_HF_FSK_READER_OUTPUT_848_KHZ           1
+`define FPGA_HF_FSK_READER_OUTPUT_424_KHZ           2
+`define FPGA_HF_FSK_READER_OUTPUT_212_KHZ           3
 
 // Options for the HF simulated tag, how to modulate
 `define FPGA_HF_SIMULATOR_NO_MODULATION             0
@@ -58,6 +63,7 @@
 `include "hi_iso14443a.v"
 `include "hi_sniffer.v"
 `include "hi_get_trace.v"
+`include "hi_read_fsk.v"
 `include "util.v"
 
 module fpga_hf(
@@ -153,6 +159,13 @@ hi_get_trace gt(
 	ck_1356megb,
 	adc_d, trace_enable, major_mode,
 	gt_ssp_frame, gt_ssp_din, gt_ssp_clk
+
+hi_read_fsk hrf(
+    ck_1356meg,
+    hrf_pwr_lo, hrf_pwr_hi, hrf_pwr_oe1, hrf_pwr_oe2, hrf_pwr_oe3, hrf_pwr_oe4,
+    adc_d, hrf_adc_clk,
+    hrf_ssp_frame, hrf_ssp_din, hrf_ssp_clk,
+    minor_mode
 );
 
 // Major modes:
@@ -162,18 +175,19 @@ hi_get_trace gt(
 //   010 --  HF ISO14443-A
 //   011 --  HF Snoop
 //   100 --  HF get trace
+//   101 --  HF FSK reader
 //   111 --  everything off
 
-mux8 mux_ssp_clk        (major_mode, ssp_clk,   hr_ssp_clk,   hs_ssp_clk,   hisn_ssp_clk,   he_ssp_clk,   gt_ssp_clk,   1'b0, 1'b0, 1'b0);
-mux8 mux_ssp_din        (major_mode, ssp_din,   hr_ssp_din,   hs_ssp_din,   hisn_ssp_din,   he_ssp_din,   gt_ssp_din,   1'b0, 1'b0, 1'b0);
-mux8 mux_ssp_frame      (major_mode, ssp_frame, hr_ssp_frame, hs_ssp_frame, hisn_ssp_frame, he_ssp_frame, gt_ssp_frame, 1'b0, 1'b0, 1'b0);
-mux8 mux_pwr_oe1        (major_mode, pwr_oe1,   hr_pwr_oe1,   hs_pwr_oe1,   hisn_pwr_oe1,   he_pwr_oe1,   1'b0,         1'b0, 1'b0, 1'b0);
-mux8 mux_pwr_oe2        (major_mode, pwr_oe2,   hr_pwr_oe2,   hs_pwr_oe2,   hisn_pwr_oe2,   he_pwr_oe2,   1'b0,         1'b0, 1'b0, 1'b0);
-mux8 mux_pwr_oe3        (major_mode, pwr_oe3,   hr_pwr_oe3,   hs_pwr_oe3,   hisn_pwr_oe3,   he_pwr_oe3,   1'b0,         1'b0, 1'b0, 1'b0);
-mux8 mux_pwr_oe4        (major_mode, pwr_oe4,   hr_pwr_oe4,   hs_pwr_oe4,   hisn_pwr_oe4,   he_pwr_oe4,   1'b0,         1'b0, 1'b0, 1'b0);
-mux8 mux_pwr_lo         (major_mode, pwr_lo,    hr_pwr_lo,    hs_pwr_lo,    hisn_pwr_lo,    he_pwr_lo,    1'b0,         1'b0, 1'b0, 1'b0);
-mux8 mux_pwr_hi         (major_mode, pwr_hi,    hr_pwr_hi,    hs_pwr_hi,    hisn_pwr_hi,    he_pwr_hi,    1'b0,         1'b0, 1'b0, 1'b0);
-mux8 mux_adc_clk        (major_mode, adc_clk,   hr_adc_clk,   hs_adc_clk,   hisn_adc_clk,   he_adc_clk,   1'b0,         1'b0, 1'b0, 1'b0);
+mux8 mux_ssp_clk        (major_mode, ssp_clk,   hr_ssp_clk,   hs_ssp_clk,   hisn_ssp_clk,   he_ssp_clk,   gt_ssp_clk,   hrf_ssp_clk, 1'b0, 1'b0);
+mux8 mux_ssp_din        (major_mode, ssp_din,   hr_ssp_din,   hs_ssp_din,   hisn_ssp_din,   he_ssp_din,   gt_ssp_din,   hrf_ssp_din, 1'b0, 1'b0);
+mux8 mux_ssp_frame      (major_mode, ssp_frame, hr_ssp_frame, hs_ssp_frame, hisn_ssp_frame, he_ssp_frame, gt_ssp_frame, hrf_ssp_frame, 1'b0, 1'b0);
+mux8 mux_pwr_oe1        (major_mode, pwr_oe1,   hr_pwr_oe1,   hs_pwr_oe1,   hisn_pwr_oe1,   he_pwr_oe1,   1'b0,         hrf_pwr_oe1, 1'b0, 1'b0);
+mux8 mux_pwr_oe2        (major_mode, pwr_oe2,   hr_pwr_oe2,   hs_pwr_oe2,   hisn_pwr_oe2,   he_pwr_oe2,   1'b0,         hrf_pwr_oe2, 1'b0, 1'b0);
+mux8 mux_pwr_oe3        (major_mode, pwr_oe3,   hr_pwr_oe3,   hs_pwr_oe3,   hisn_pwr_oe3,   he_pwr_oe3,   1'b0,         hrf_pwr_oe3, 1'b0, 1'b0);
+mux8 mux_pwr_oe4        (major_mode, pwr_oe4,   hr_pwr_oe4,   hs_pwr_oe4,   hisn_pwr_oe4,   he_pwr_oe4,   1'b0,         hrf_pwr_oe4, 1'b0, 1'b0);
+mux8 mux_pwr_lo         (major_mode, pwr_lo,    hr_pwr_lo,    hs_pwr_lo,    hisn_pwr_lo,    he_pwr_lo,    1'b0,         hrf_pwr_lo, 1'b0, 1'b0);
+mux8 mux_pwr_hi         (major_mode, pwr_hi,    hr_pwr_hi,    hs_pwr_hi,    hisn_pwr_hi,    he_pwr_hi,    1'b0,         hrf_pwr_hi, 1'b0, 1'b0);
+mux8 mux_adc_clk        (major_mode, adc_clk,   hr_adc_clk,   hs_adc_clk,   hisn_adc_clk,   he_adc_clk,   1'b0,         hrf_adc_clk, 1'b0, 1'b0);
 mux8 mux_dbg            (major_mode, dbg,       hr_dbg,       hs_dbg,       hisn_dbg,       1'b0,         1'b0,         1'b0, 1'b0, 1'b0);
 
 // In all modes, let the ADC's outputs be enabled.
