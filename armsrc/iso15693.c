@@ -720,12 +720,12 @@ int GetIso15693AnswerFromTag(uint8_t* response, uint16_t max_len, uint16_t timeo
 //          false if we are still waiting for some more
 //=============================================================================
 
-#define FREQ_IS_484(f)  ((f >= 26 && f <= 30) ? true : false)
-#define FREQ_IS_424(f)  ((f >= 30 && f <= 34) ? true : false)
-#define SEOF_COUNT(c)   ((c >= 22 && c <= 26) ? true : false)
-#define LOGIC_COUNT(c)  ((c >= 6 && c <= 11) ? true : false)
-#define MAX_COUNT(c)    ((c > 30) ? true : false)
-#define MIN_COUNT(c)    ((c < 4) ? true : false)
+#define FREQ_IS_484(f)    (f >= 26 && f <= 30)
+#define FREQ_IS_424(f)    (f >= 30 && f <= 34)
+#define SEOF_COUNT(c, s)  ((s) ? (c >= 22 && c <= 26) : (c >= 92 && c <= 100))
+#define LOGIC_COUNT(c, s) ((s) ? (c >= 6 && c <= 11) : (c >= 28 && c <= 38))
+#define MAX_COUNT(c, s)   ((s) ? (c > 30) : (c > 110))
+#define MIN_COUNT(c, s)   ((s) ? (c < 4) : (c < 8))
 
 typedef struct DecodeTagFSK {
 	enum {
@@ -740,8 +740,8 @@ typedef struct DecodeTagFSK {
 	}        state;
 	enum {
 		LOGIC0_PART1,
-		LOGIC0_PART2,
 		LOGIC1_PART1,
+		LOGIC0_PART2,
 		LOGIC1_PART2,
 		SOF
 	}        lastBit;
@@ -766,7 +766,9 @@ static void DecodeTagFSKInit(DecodeTagFSK_t *DecodeTag, uint8_t *data, uint16_t 
 	DecodeTagFSKReset(DecodeTag);
 }
 
-static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(uint8_t freq, DecodeTagFSK_t *DecodeTag)
+// Perfomances of this function are crutial for stability as it is called in real time
+// More optimisations have to be done.
+static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(uint8_t freq, DecodeTagFSK_t *DecodeTag, bool recv_speed)
 {
 	switch(DecodeTag->state) {
 		case STATE_FSK_BEFORE_SOF:
@@ -779,9 +781,9 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 			break;
 
 		case STATE_FSK_SOF_484:
-			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count)) // still in SOF at 484
+			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count, recv_speed)) // still in SOF at 484
 				DecodeTag->count++;
-			else if (FREQ_IS_424(freq) && SEOF_COUNT(DecodeTag->count))
+			else if (FREQ_IS_424(freq) && SEOF_COUNT(DecodeTag->count, recv_speed))
 			{ // SOF part1 continue at 424
 				DecodeTag->state = STATE_FSK_SOF_424;
 				DecodeTag->count = 1;
@@ -791,9 +793,9 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 			break;
 
 		case STATE_FSK_SOF_424:
-			if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count)) // still in SOF at 424
+			if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count, recv_speed)) // still in SOF at 424
 				DecodeTag->count++;
-			else if (FREQ_IS_484(freq) && SEOF_COUNT(DecodeTag->count))
+			else if (FREQ_IS_484(freq) && SEOF_COUNT(DecodeTag->count, recv_speed))
 			{ // SOF part 1 finished
 				DecodeTag->state = STATE_FSK_SOF_END;
 				DecodeTag->count = 1;
@@ -803,9 +805,9 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 			break;
 
 		case STATE_FSK_SOF_END:
-			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count))  // still in SOF_END (484)
+			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count, recv_speed))  // still in SOF_END (484)
 				DecodeTag->count++;
-			else if (FREQ_IS_424(freq) && LOGIC_COUNT(DecodeTag->count))
+			else if (FREQ_IS_424(freq) && LOGIC_COUNT(DecodeTag->count, recv_speed))
 			{ // SOF END finished or SOF END 1st part finished
 				DecodeTag->count = 0;
 				if (DecodeTag->lastBit == SOF)
@@ -815,10 +817,10 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 				}
 				DecodeTag->lastBit = SOF;
 			}
-			else if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count)) // still in SOF_END (424)
+			else if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count, recv_speed)) // still in SOF_END (424)
 				DecodeTag->count++;
 			else if (DecodeTag->lastBit == SOF && FREQ_IS_484(freq) &&
-					 LOGIC_COUNT(DecodeTag->count))
+					 LOGIC_COUNT(DecodeTag->count, recv_speed))
 			{ // SOF finished at 484
 				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
 				DecodeTag->count = 1;
@@ -830,7 +832,8 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 
 
 		case STATE_FSK_RECEIVING_DATA_424:
-			if (DecodeTag->lastBit == LOGIC1_PART1 && LOGIC_COUNT(DecodeTag->count))
+			if (DecodeTag->lastBit == LOGIC1_PART1 &&
+				LOGIC_COUNT(DecodeTag->count, recv_speed))
 			{ // logic 1 finished
 				DecodeTag->lastBit = LOGIC1_PART2;
 				DecodeTag->count = 0;
@@ -849,24 +852,22 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 					DecodeTag->shiftReg = 0;
 				}
 			}
-			else if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count)) // still at 424
+			else if (FREQ_IS_424(freq) && !MAX_COUNT(DecodeTag->count, recv_speed)) // still at 424
 				DecodeTag->count++;
-			else if (FREQ_IS_484(freq) && MIN_COUNT(DecodeTag->count))
-			{ // it was just the end of the previous block
-				DecodeTag->count = 1;
-				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
-			}
-			else if (FREQ_IS_484(freq) && LOGIC_COUNT(DecodeTag->count) &&
-					 (DecodeTag->lastBit == LOGIC0_PART2 ||
-					  DecodeTag->lastBit == LOGIC1_PART2 ||
-					  DecodeTag->lastBit == SOF ))
+			else if (FREQ_IS_484(freq) && LOGIC_COUNT(DecodeTag->count, recv_speed) &&
+					 DecodeTag->lastBit >= LOGIC0_PART2)
 			{ // end of LOGIC0_PART1
 				DecodeTag->count = 1;
 				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
 				DecodeTag->lastBit = LOGIC0_PART1;
 			}
+			else if (FREQ_IS_484(freq) && MIN_COUNT(DecodeTag->count, recv_speed))
+			{ // it was just the end of the previous block
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_484;
+			}
 			else if (FREQ_IS_484(freq) && DecodeTag->lastBit == LOGIC0_PART2 &&
-					 SEOF_COUNT(DecodeTag->count))
+					 SEOF_COUNT(DecodeTag->count, recv_speed))
 			{ // EOF has started
 				DecodeTag->count = 1;
 				DecodeTag->state = STATE_FSK_EOF;
@@ -881,7 +882,8 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 			break;
 
 		case STATE_FSK_RECEIVING_DATA_484:
-			if (DecodeTag->lastBit == LOGIC0_PART1 && LOGIC_COUNT(DecodeTag->count))
+			if (DecodeTag->lastBit == LOGIC0_PART1 &&
+				LOGIC_COUNT(DecodeTag->count, recv_speed))
 			{ // logic 0 finished
 				DecodeTag->lastBit = LOGIC0_PART2;
 				DecodeTag->count = 0;
@@ -899,21 +901,19 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 					DecodeTag->shiftReg = 0;
 				}
 			}
-			else if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count)) // still at 484
+			else if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count, recv_speed)) // still at 484
 				DecodeTag->count++;
-			else if (FREQ_IS_424(freq) && MIN_COUNT(DecodeTag->count))
-			{ // it was just the end of the previous block
-				DecodeTag->count = 1;
-				DecodeTag->state = STATE_FSK_RECEIVING_DATA_424;
-			}
-			else if (FREQ_IS_424(freq) && LOGIC_COUNT(DecodeTag->count) &&
-					 (DecodeTag->lastBit == LOGIC0_PART2 ||
-					  DecodeTag->lastBit == LOGIC1_PART2 ||
-					  DecodeTag->lastBit == SOF ))
+			else if (FREQ_IS_424(freq) && LOGIC_COUNT(DecodeTag->count, recv_speed) &&
+					 DecodeTag->lastBit >= LOGIC0_PART2)
 			{ // end of LOGIC1_PART1
 				DecodeTag->count = 1;
 				DecodeTag->state = STATE_FSK_RECEIVING_DATA_424;
 				DecodeTag->lastBit = LOGIC1_PART1;
+			}
+			else if (FREQ_IS_424(freq) && MIN_COUNT(DecodeTag->count, recv_speed))
+			{ // it was just the end of the previous block
+				DecodeTag->count = 1;
+				DecodeTag->state = STATE_FSK_RECEIVING_DATA_424;
 			}
 			else // error
 			{
@@ -924,10 +924,10 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 			break;
 
 		case STATE_FSK_EOF:
-			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count)) // still at 484
+			if (FREQ_IS_484(freq) && !MAX_COUNT(DecodeTag->count, recv_speed)) // still at 484
 			{
 				DecodeTag->count++;
-				if (SEOF_COUNT(DecodeTag->count))
+				if (SEOF_COUNT(DecodeTag->count, recv_speed))
 					return true; // end of the transmission
 			}
 			else // error
@@ -944,7 +944,7 @@ static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(ui
 	return false;
 }
 
-int GetIso15693AnswerFromTagFSK(uint8_t* response, uint16_t max_len, uint16_t timeout, uint32_t *eof_time) {
+int GetIso15693AnswerFromTagFSK(uint8_t* response, uint16_t max_len, uint16_t timeout, uint32_t *eof_time, bool recv_speed) {
 
 	int samples = 0;
 	int ret = 0;
@@ -993,7 +993,7 @@ int GetIso15693AnswerFromTagFSK(uint8_t* response, uint16_t max_len, uint16_t ti
 			AT91C_BASE_PDC_SSC->PDC_RNCR = ISO15693_DMA_BUFFER_SIZE;   // DMA Next Counter registers
 		}
 
-		if (Handle15693FSKSamplesFromTag(tagdata, &DecodeTag)) {
+		if (Handle15693FSKSamplesFromTag(tagdata, &DecodeTag, recv_speed)) {
 			*eof_time = dma_start_time + samples*16 - DELAY_TAG_TO_ARM; // end of EOF
 			if (DecodeTag.lastBit == SOF) {
 				*eof_time -= 8*16; // needed 8 additional samples to confirm single SOF (iCLASS)
@@ -1681,9 +1681,8 @@ int SendDataTag(uint8_t *send, int sendlen, bool init, int speed, uint8_t *recv,
 
 	int answerLen = 0;
 
-	bool fsk = false;
-	if (send[0]&ISO15693_REQ_SUBCARRIER_TWO)
-		fsk = true;
+	bool fsk = send[0]&ISO15693_REQ_SUBCARRIER_TWO;
+	bool recv_speed = send[0]&ISO15693_REQ_DATARATE_HIGH;
 
 	if (!speed) {
 		// low speed (1 out of 256)
@@ -1698,7 +1697,7 @@ int SendDataTag(uint8_t *send, int sendlen, bool init, int speed, uint8_t *recv,
 	// Now wait for a response
 	if (recv != NULL) {
 		if (fsk)
-			answerLen = GetIso15693AnswerFromTagFSK(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time);
+			answerLen = GetIso15693AnswerFromTagFSK(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time, recv_speed);
 		else
 			answerLen = GetIso15693AnswerFromTag(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time);
 	}
