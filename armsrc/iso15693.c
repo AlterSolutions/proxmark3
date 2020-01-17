@@ -722,10 +722,10 @@ int GetIso15693AnswerFromTag(uint8_t* response, uint16_t max_len, uint16_t timeo
 
 #define FREQ_IS_484(f)    (f >= 26 && f <= 30)
 #define FREQ_IS_424(f)    (f >= 30 && f <= 34)
-#define SEOF_COUNT(c, s)  ((s) ? (c >= 22 && c <= 26) : (c >= 92 && c <= 100))
-#define LOGIC_COUNT(c, s) ((s) ? (c >= 6 && c <= 11) : (c >= 28 && c <= 38))
-#define MAX_COUNT(c, s)   ((s) ? (c > 30) : (c > 110))
-#define MIN_COUNT(c, s)   ((s) ? (c < 4) : (c < 8))
+#define SEOF_COUNT(c, s)  ((s) ? (c >= 11 && c <= 13) : (c >= 44 && c <= 52))
+#define LOGIC_COUNT(c, s) ((s) ? (c >= 3 && c <= 6) : (c >= 13 && c <= 21))
+#define MAX_COUNT(c, s)   ((s) ? (c >= 13) : (c >= 52))
+#define MIN_COUNT(c, s)   ((s) ? (c <= 2) : (c <= 4))
 
 typedef struct DecodeTagFSK {
 	enum {
@@ -766,8 +766,8 @@ static void DecodeTagFSKInit(DecodeTagFSK_t *DecodeTag, uint8_t *data, uint16_t 
 	DecodeTagFSKReset(DecodeTag);
 }
 
-// Perfomances of this function are crutial for stability as it is called in real time
-// More optimisations have to be done.
+// Performances of this function are crutial for stability
+// as it is called in real time for every samples
 static int inline __attribute__((always_inline)) Handle15693FSKSamplesFromTag(uint8_t freq, DecodeTagFSK_t *DecodeTag, bool recv_speed)
 {
 	switch(DecodeTag->state) {
@@ -959,7 +959,7 @@ int GetIso15693AnswerFromTagFSK(uint8_t* response, uint16_t max_len, uint16_t ti
 	while (!(AT91C_BASE_SSC->SSC_SR & AT91C_SSC_TXEMPTY));
 
 	// And put the FPGA in the appropriate mode
-	FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_FSK_READER | FPGA_HF_FSK_READER_OUTPUT_424_KHZ);
+	FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_FSK_READER | FPGA_HF_FSK_READER_OUTPUT_212_KHZ);
 
 	// Setup and start DMA.
 	FpgaSetupSsc(FPGA_MAJOR_MODE_HF_FSK_READER);
