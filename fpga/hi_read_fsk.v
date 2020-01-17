@@ -37,7 +37,7 @@ reg edge_started = 1'd0;
 // Count clock edge between two signal edges
 always @(negedge adc_clk)
 begin
-    adc_cnt <= adc_cnt + 1;
+    adc_cnt <= adc_cnt + 1'd1;
 
     if (adc_d > old && adc_d - old > 8'd24) // edge detected
     begin
@@ -65,17 +65,17 @@ begin
     if (output_frequency == `FPGA_HF_FSK_READER_OUTPUT_848_KHZ && adc_cnt[0] == 1'd0)
     begin // average on 2 values
         out <= out_tmp[8:1];
-        out_tmp <= 1'd0;
+        out_tmp <= 11'd0;
     end
-    else if (output_frequency == `FPGA_HF_FSK_READER_OUTPUT_424_KHZ && adc_cnt[1] == 1'd0)
+    else if (output_frequency == `FPGA_HF_FSK_READER_OUTPUT_424_KHZ && adc_cnt[1:0] == 2'd0)
     begin // average on 4 values
         out <= out_tmp[9:2];
-        out_tmp <= 1'd0;
+        out_tmp <= 11'd0;
     end
-    else if (output_frequency == `FPGA_HF_FSK_READER_OUTPUT_212_KHZ && adc_cnt[2] == 1'd0)
+    else if (output_frequency == `FPGA_HF_FSK_READER_OUTPUT_212_KHZ && adc_cnt[2:0] == 3'd0)
     begin // average on 8 values
         out <= out_tmp[10:3];
-        out_tmp <= 1'd0;
+        out_tmp <= 11'd0;
     end
     else
         out <= out1;
@@ -108,7 +108,7 @@ reg [7:0] ssp_out = 8'd0;
 reg [2:0] ssp_cnt = 3'd0;
 always @(posedge ssp_clk)
 begin
-    ssp_cnt <= ssp_cnt + 1;
+    ssp_cnt <= ssp_cnt + 1'd1;
     if(ssp_cnt == 3'd7)
     begin
         ssp_out <= out;
