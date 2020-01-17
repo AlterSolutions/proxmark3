@@ -384,7 +384,7 @@ typedef struct DecodeTag {
 } DecodeTag_t;
 
 
-static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint16_t amplitude, DecodeTag_t *DecodeTag)
+static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint16_t amplitude, DecodeTag_t *DecodeTag, bool recv_speed)
 {
 	switch(DecodeTag->state) {
 		case STATE_TAG_SOF_LOW:
@@ -426,7 +426,7 @@ static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint1
 				if (DecodeTag->posCount > 2) {
 					DecodeTag->threshold_half += amplitude; // keep track of average high value
 				}
-				if (DecodeTag->posCount == 10) {
+				if (DecodeTag->posCount == (recv_speed?10:40)) {
 					DecodeTag->threshold_half >>= 2; // (4 times 1/2 average)
 					DecodeTag->state = STATE_TAG_SOF_HIGH_END;
 				}
@@ -439,7 +439,7 @@ static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint1
 
 		case STATE_TAG_SOF_HIGH_END:
 			// check for falling edge
-			if (DecodeTag->posCount == 13 && amplitude < DecodeTag->threshold_sof) {
+			if (DecodeTag->posCount == (recv_speed?13:52) && amplitude < DecodeTag->threshold_sof) {
 				DecodeTag->lastBit = SOF_PART1;  // detected 1st part of SOF (12 samples low and 12 samples high)
 				DecodeTag->shiftReg = 0;
 				DecodeTag->bitCount = 0;
@@ -457,7 +457,7 @@ static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint1
 				LED_C_ON();
 			} else {
 				DecodeTag->posCount++;
-				if (DecodeTag->posCount > 13) { // high phase too long
+				if (DecodeTag->posCount > (recv_speed?13:52)) { // high phase too long
 					DecodeTag->posCount = 0;
 					DecodeTag->previous_amplitude = amplitude;
 					DecodeTag->state = STATE_TAG_SOF_LOW;
@@ -471,12 +471,12 @@ static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint1
 				DecodeTag->sum1 = 0;
 				DecodeTag->sum2 = 0;
 			}
-			if (DecodeTag->posCount <= 4) {
+			if (DecodeTag->posCount <= (recv_speed?4:16)) {
 				DecodeTag->sum1 += amplitude;
 			} else {
 				DecodeTag->sum2 += amplitude;
 			}
-			if (DecodeTag->posCount == 8) {
+			if (DecodeTag->posCount == (recv_speed?8:32)) {
 				if (DecodeTag->sum1 > DecodeTag->threshold_half && DecodeTag->sum2 > DecodeTag->threshold_half) { // modulation in both halves
 					if (DecodeTag->lastBit == LOGIC0) {  // this was already part of EOF
 						DecodeTag->state = STATE_TAG_EOF;
@@ -554,12 +554,12 @@ static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint1
 				DecodeTag->sum1 = 0;
 				DecodeTag->sum2 = 0;
 			}
-			if (DecodeTag->posCount <= 4) {
+			if (DecodeTag->posCount <= (recv_speed?4:16)) {
 				DecodeTag->sum1 += amplitude;
 			} else {
 				DecodeTag->sum2 += amplitude;
 			}
-			if (DecodeTag->posCount == 8) {
+			if (DecodeTag->posCount == (recv_speed?8:32)) {
 				if (DecodeTag->sum1 > DecodeTag->threshold_half && DecodeTag->sum2 < DecodeTag->threshold_half) { // modulation in first half
 					DecodeTag->posCount = 0;
 					DecodeTag->state = STATE_TAG_EOF_TAIL;
@@ -578,12 +578,12 @@ static int inline __attribute__((always_inline)) Handle15693SamplesFromTag(uint1
 				DecodeTag->sum1 = 0;
 				DecodeTag->sum2 = 0;
 			}
-			if (DecodeTag->posCount <= 4) {
+			if (DecodeTag->posCount <= (recv_speed?4:16)) {
 				DecodeTag->sum1 += amplitude;
 			} else {
 				DecodeTag->sum2 += amplitude;
 			}
-			if (DecodeTag->posCount == 8) {
+			if (DecodeTag->posCount == (recv_speed?8:32)) {
 				if (DecodeTag->sum1 < DecodeTag->threshold_half && DecodeTag->sum2 < DecodeTag->threshold_half) { // no modulation in both halves
 					LED_C_OFF();
 					return true;
@@ -621,7 +621,7 @@ static void DecodeTagReset(DecodeTag_t *DecodeTag) {
 /*
  *  Receive and decode the tag response, also log to tracebuffer
  */
-int GetIso15693AnswerFromTag(uint8_t* response, uint16_t max_len, uint16_t timeout, uint32_t *eof_time) {
+int GetIso15693AnswerFromTag(uint8_t* response, uint16_t max_len, uint16_t timeout, uint32_t *eof_time, bool recv_speed) {
 
 	int samples = 0;
 	int ret = 0;
@@ -670,7 +670,7 @@ int GetIso15693AnswerFromTag(uint8_t* response, uint16_t max_len, uint16_t timeo
 			AT91C_BASE_PDC_SSC->PDC_RNCR = ISO15693_DMA_BUFFER_SIZE;   // DMA Next Counter registers
 		}
 
-		if (Handle15693SamplesFromTag(tagdata, &DecodeTag)) {
+		if (Handle15693SamplesFromTag(tagdata, &DecodeTag, recv_speed)) {
 			*eof_time = dma_start_time + samples*16 - DELAY_TAG_TO_ARM; // end of EOF
 			if (DecodeTag.lastBit == SOF_PART2) {
 				*eof_time -= 8*16; // needed 8 additional samples to confirm single SOF (iCLASS)
@@ -1554,7 +1554,7 @@ void SnoopIso15693(void)
 		}
 
 		if (!ReaderIsActive && ExpectTagAnswer) {                       // no need to try decoding tag data if the reader is currently sending or no answer expected yet
-			if (Handle15693SamplesFromTag(snoopdata >> 2, &DecodeTag)) {
+			if (Handle15693SamplesFromTag(snoopdata >> 2, &DecodeTag, true)) {
 				FpgaDisableSscDma();
 				//Use samples as a time measurement
 				LogTrace_ISO15693(DecodeTag.output, DecodeTag.len, samples*64, samples*64, NULL, false);
@@ -1699,7 +1699,7 @@ int SendDataTag(uint8_t *send, int sendlen, bool init, int speed, uint8_t *recv,
 		if (fsk)
 			answerLen = GetIso15693AnswerFromTagFSK(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time, recv_speed);
 		else
-			answerLen = GetIso15693AnswerFromTag(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time);
+			answerLen = GetIso15693AnswerFromTag(recv, max_recv_len, ISO15693_READER_TIMEOUT*60, eof_time, recv_speed);
 	}
 
 	return answerLen;
@@ -1823,7 +1823,7 @@ void ReaderIso15693(uint32_t parameter) {
 
 	// Now wait for a response
 	uint32_t eof_time;
-	answerLen = GetIso15693AnswerFromTag(answer, sizeof(answer), DELAY_ISO15693_VCD_TO_VICC_READER * 2, &eof_time) ;
+	answerLen = GetIso15693AnswerFromTag(answer, sizeof(answer), DELAY_ISO15693_VCD_TO_VICC_READER * 2, &eof_time, true) ;
 	start_time = eof_time + DELAY_ISO15693_VICC_TO_VCD_READER;
 
 	if (answerLen >=12) // we should do a better check than this
@@ -1863,7 +1863,7 @@ void ReaderIso15693(uint32_t parameter) {
 		for (int i = 0; i < 32; i++) {  // sanity check, assume max 32 pages
 			BuildReadBlockRequest(TagUID, i);
 			TransmitTo15693Tag(ToSend, ToSendMax, &start_time);
-			int answerLen = GetIso15693AnswerFromTag(answer, sizeof(answer), DELAY_ISO15693_VCD_TO_VICC_READER * 2, &eof_time);
+			int answerLen = GetIso15693AnswerFromTag(answer, sizeof(answer), DELAY_ISO15693_VCD_TO_VICC_READER * 2, &eof_time, true);
 			start_time = eof_time + DELAY_ISO15693_VICC_TO_VCD_READER;
 			if (answerLen > 0) {
 				Dbprintf("READ SINGLE BLOCK %d returned %d octets:", i, answerLen);

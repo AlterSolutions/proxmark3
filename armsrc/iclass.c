@@ -1341,7 +1341,7 @@ static bool sendCmdGetResponseWithRetries(uint8_t* command, size_t cmdsize, uint
 										  uint8_t expected_size, uint8_t retries, uint32_t start_time, uint32_t *eof_time) {
 	while (retries-- > 0) {
 		ReaderTransmitIClass(command, cmdsize, &start_time);
-		if (expected_size == GetIso15693AnswerFromTag(resp, max_resp_size, ICLASS_READER_TIMEOUT_OTHERS, eof_time)) {
+		if (expected_size == GetIso15693AnswerFromTag(resp, max_resp_size, ICLASS_READER_TIMEOUT_OTHERS, eof_time, true)) {
 			return true;
 		}
 	}
@@ -1366,13 +1366,13 @@ static bool selectIclassTag(uint8_t *card_data, uint32_t *eof_time) {
 	// Send act_all
 	ReaderTransmitIClass(act_all, 1, &start_time);
 	// Card present?
-	if (GetIso15693AnswerFromTag(resp, sizeof(resp), ICLASS_READER_TIMEOUT_ACTALL, eof_time) < 0) return false;//Fail
+	if (GetIso15693AnswerFromTag(resp, sizeof(resp), ICLASS_READER_TIMEOUT_ACTALL, eof_time, true) < 0) return false;//Fail
 
 	//Send Identify
 	start_time = *eof_time + DELAY_ICLASS_VICC_TO_VCD_READER;
 	ReaderTransmitIClass(identify, 1, &start_time);
 	//We expect a 10-byte response here, 8 byte anticollision-CSN and 2 byte CRC
-	uint8_t len = GetIso15693AnswerFromTag(resp, sizeof(resp), ICLASS_READER_TIMEOUT_OTHERS, eof_time);
+	uint8_t len = GetIso15693AnswerFromTag(resp, sizeof(resp), ICLASS_READER_TIMEOUT_OTHERS, eof_time, true);
 	if (len != 10) return false;//Fail
 
 	//Copy the Anti-collision CSN to our select-packet
@@ -1381,7 +1381,7 @@ static bool selectIclassTag(uint8_t *card_data, uint32_t *eof_time) {
 	start_time = *eof_time + DELAY_ICLASS_VICC_TO_VCD_READER;
 	ReaderTransmitIClass(select, sizeof(select), &start_time);
 	//We expect a 10-byte response here, 8 byte CSN and 2 byte CRC
-	len = GetIso15693AnswerFromTag(resp, sizeof(resp), ICLASS_READER_TIMEOUT_OTHERS, eof_time);
+	len = GetIso15693AnswerFromTag(resp, sizeof(resp), ICLASS_READER_TIMEOUT_OTHERS, eof_time, true);
 	if (len != 10) return false;//Fail
 
 	//Success - we got CSN
