@@ -38,6 +38,7 @@
 #include "protocols.h"
 #include "cmdmain.h"
 #include "taginfo.h"
+#include "loclass/fileutils.h"
 
 #define Crc(data,datalen)     Iso15693Crc(data,datalen)
 #define AddCrc(data,datalen)  Iso15693AddCrc(data,datalen)
@@ -368,6 +369,225 @@ int CmdHF15DumpMem(const char*Cmd) {
 	return 1;
 }
 
+static int usage_15_dump(void) {
+	PrintAndLogEx(NORMAL, "This command dumps the contents of a ISO-15693 tag and save it to file\n"
+				  "\n"
+		          "Usage: hf 15 dump [h] [<f filename>] [e] \n"
+                  "Options:\n"
+                  "\th             this help\n"
+                  "\tf <filename>      filename,  if no <filename> UID will be used as filename\n"
+                  "\te             dump to the emulator memory\n"
+                  "\n"
+                  "Example:\n"
+                  "\thf 15 dump f\n"
+                  "\thf 15 dump f mydump\n"
+                  "\thf 15 dump e\n"
+                  "\thf 15 dump e f mydump\n");
+	return 0;
+}
+
+static int CmdHF15Dump(const char *Cmd) {
+
+	uint8_t fileNameLen = 0;
+	char filename[FILE_PATH_SIZE] = {0};
+	char *fptr = filename;
+	bool errors = false;
+	uint8_t cmdp = 0;
+	bool dump2Emul = false, dump2File = false;
+
+	while (param_getchar(Cmd, cmdp) != 0x00 && !errors) {
+		switch (param_getchar(Cmd, cmdp)) {
+			case 'h':
+				return usage_15_dump();
+			case 'f':
+				fileNameLen = param_getstr(Cmd, cmdp + 1, filename, FILE_PATH_SIZE);
+				cmdp += 2;
+				dump2File = true;
+				break;
+			case 'e':
+				cmdp ++;
+				dump2Emul = true;
+				break;
+			default:
+				PrintAndLogEx(WARNING, "Unknown parameter '%c'\n", param_getchar(Cmd, cmdp));
+				errors = true;
+				break;
+		}
+	}
+
+	//Validations
+	if (errors || (!dump2Emul&&!dump2File)) return usage_15_dump();
+
+   	uint8_t uid[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+	if (!getUID(uid)) {
+		PrintAndLogEx(WARNING, "No tag found.");
+		return 1;
+	}
+
+
+	if (fileNameLen < 1 && dump2File) {
+
+		PrintAndLogEx(INFO, "Using UID as filename");
+
+		fptr += sprintf(fptr, "hf-15-");
+		FillFileNameByUID(fptr, uid, "-dump", sizeof(uid));
+	}
+
+
+	PrintAndLogEx(SUCCESS, "Reading informations from tag UID " _YELLOW_("%s"), sprintUID(NULL, uid));
+
+	// Get Tag informations
+
+	uint8_t *recv = NULL;
+	UsbCommand resp;
+	UsbCommand c = {CMD_ISO_15693_COMMAND, {0, 1, 1}}; // len,speed,recv?
+	uint8_t *req=c.d.asBytes;
+	int16_t reqlen=0;
+
+	req[0] = ISO15693_REQ_DATARATE_HIGH | ISO15693_REQ_ADDRESS;
+	req[1] = ISO15693_GET_SYSTEM_INFO;
+
+	// copy uid to read command
+	memcpy(req + 2, uid, sizeof(uid));
+
+	reqlen = AddCrc(req,10);
+	c.arg[0] = reqlen;
+
+	uint8_t dsfid = 0;
+	uint8_t afi = 0;
+	uint8_t bpp = 4; // Byte/Page
+	uint8_t pages = 128;
+	uint8_t ic = 0;
+
+	uint8_t i;
+
+	for (int retry = 0; retry < 5; retry++) {
+		SendCommand(&c);
+
+		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000))
+		{
+			recv = resp.d.asBytes;
+			if (ISO15693_CRC_CHECK!=Crc(recv,resp.arg[0])) {
+				PrintAndLogEx(FAILED, "crc fail");
+				continue;
+			}
+
+			if (recv[0] & ISO15693_RES_ERROR) {
+				PrintAndLogEx(FAILED, "Tag returned Error %i: %s", recv[1], TagErrorStr(recv[1]));
+				continue;
+			}
+			i=10;
+			if (recv[1] & 0x01)
+				dsfid = recv[i++];
+			if (recv[1] & 0x02)
+				afi = recv[i++];
+			if (recv[1] & 0x04)
+			{
+				pages = recv[i++]+1;
+				bpp = recv[i++]+1;
+			}
+			if (recv[1] & 0x08)
+				ic = recv[i++];
+
+			break;
+		}
+	}
+
+	// Allocating tag memory
+
+	uint8_t *tag = malloc(sizeof(uint8_t)*(16+pages+(pages*bpp)));
+	uint8_t *tagUid = tag;
+	uint8_t *tagDSFID = tagUid+8;
+	uint8_t *tagDSFIDLock = tagDSFID+1;
+	uint8_t *tagAFI = tagDSFIDLock+1;
+	uint8_t *tagAFILock = tagAFI+1;
+	uint8_t *tagBpP = tagAFILock+1; // Byte/Page
+	uint8_t *tagPages = tagBpP+1;
+	uint8_t *tagIC = tagPages+1;
+	uint8_t *tagLocks = tagIC+1;
+	uint8_t *tagData = tagLocks+1 + pages;
+
+	memcpy(tagUid, uid, sizeof(uid));
+	*tagDSFID = dsfid;
+	*tagDSFIDLock = 0;
+	*tagAFI = afi;
+	*tagAFILock = 0;
+	*tagBpP = bpp;
+	*tagPages = pages;
+	*tagIC = ic;
+	memset(tagLocks, 0, pages);
+	memset(tagData, 0, pages*bpp);
+
+	PrintAndLogEx(SUCCESS, "Reading data from tag UID " _YELLOW_("%s"), sprintUID(NULL, uid));
+
+	// Get Tag data
+
+	req[1] = ISO15693_READBLOCK;
+
+	uint8_t blocknum = 0;
+
+	for (uint8_t retry = 0; retry < 5; retry++) {
+
+		if (blocknum >= pages)
+		{
+			PrintAndLogEx(SUCCESS, "All %d pages succesfully readed", pages);
+			break;
+		}
+		req[10] = blocknum;
+		reqlen = AddCrc(req,11);
+		c.arg[0] = reqlen;
+
+		SendCommand(&c);
+
+		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000)) {
+
+			recv = resp.d.asBytes;
+
+			if (ISO15693_CRC_CHECK!=Crc(recv,resp.arg[0])) {
+				PrintAndLogEx(FAILED, "crc fail");
+				continue;
+			}
+
+			if (recv[0] & ISO15693_RES_ERROR) {
+				PrintAndLogEx(FAILED, "Tag returned Error %i: %s", recv[1], TagErrorStr(recv[1]));
+				break;
+			}
+
+			tagLocks[blocknum] = resp.d.asBytes[0];
+			memcpy(tagData + (blocknum * bpp), resp.d.asBytes + 1, bpp);
+
+			retry = 0;
+			blocknum++;
+		}
+	}
+
+	size_t datalen = sizeof(uint8_t)*(16+pages+(pages*bpp));
+
+	if (dump2File)
+	{
+		saveFile(filename, "bin", tag, datalen);
+	}
+
+	if (dump2Emul)
+	{
+		uint32_t bytes_sent = 0;
+		uint32_t bytes_remaining = datalen;
+
+		while (bytes_remaining > 0) {
+			uint32_t bytes_in_packet = MIN(USB_CMD_DATA_SIZE, bytes_remaining);
+			UsbCommand c = {CMD_ICLASS_EML_MEMSET, {bytes_sent,bytes_in_packet,0}};
+			memcpy(c.d.asBytes, tag+bytes_sent, bytes_in_packet);
+			SendCommand(&c);
+			bytes_remaining -= bytes_in_packet;
+			bytes_sent += bytes_in_packet;
+		}
+	}
+
+	free(tag);
+
+	return 0;
+}
+
 
 // "HF 15" interface
 
@@ -382,6 +602,7 @@ static command_t CommandTable15[] =
 	{"cmd",     CmdHF15Cmd,     0, "Send direct commands to ISO15693 tag"},
 	{"findafi", CmdHF15Afi,     0, "Brute force AFI of an ISO15693 tag"},
 	{"dumpmemory", CmdHF15DumpMem,     0, "Read all memory pages of an ISO15693 tag"},
+    {"dump",    CmdHF15Dump,    0, "Dump ISO15693 tag data to file or to the emulator memory"},
 	{"csetuid",	CmdHF15CSetUID,	0,	"Set UID for magic Chinese card"},
 	{NULL, NULL, 0, NULL}
 };
