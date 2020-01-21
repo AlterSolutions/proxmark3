@@ -1953,10 +1953,13 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid) {
 
 		recvLen = 0;
 
-		if (cmd[0]&ISO15693_REQ_SUBCARRIER_TWO)
-			Dbprintf("ISO15693_REQ_SUBCARRIER_TWO not supported!");
-		if (cmd[0]&ISO15693_REQ_PROTOCOL_EXT)
-			Dbprintf("ISO15693_REQ_PROTOCOL_EXT not supported!");
+        if (DEBUG)
+        {
+            if (cmd[0]&ISO15693_REQ_SUBCARRIER_TWO)
+                Dbprintf("ISO15693_REQ_SUBCARRIER_TWO not supported!");
+            if (cmd[0]&ISO15693_REQ_PROTOCOL_EXT)
+                Dbprintf("ISO15693_REQ_PROTOCOL_EXT not supported!");
+        }
 
 		if (cmd[0]&ISO15693_REQ_DATARATE_HIGH)
 			highRate = true;
@@ -2001,7 +2004,7 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid) {
 			}
 			else if (quiet)
 			{
-				if (DEBUG) Dbprintf("Unaddressed request in quit state : drop");
+				if (DEBUG) Dbprintf("Unaddressed request in quiet state : drop");
 				continue; // drop unadressed request in quiet state
 			}
 
@@ -2170,7 +2173,7 @@ void SimTagIso15693(uint32_t parameter, uint8_t *uid) {
 				break;
 
 			default:
-				Dbprintf("ISO15693 CMD 0x%2X not supported", cmd[1]);
+				if (DEBUG) Dbprintf("ISO15693 CMD 0x%2X not supported", cmd[1]);
 
 				error = ISO15693_ERROR_CMD_NOT_SUP;
 				break;
