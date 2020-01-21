@@ -13,6 +13,8 @@
 
 #include <stdbool.h>
 
+#define CARD_MEMORY_SIZE		4096 // should be == CARD_MEMORY_SIZE defined in armsrc/BigBuf.h
+
 int CmdHF15(const char *Cmd);
 
 int CmdHF15Demod(const char *Cmd);
@@ -23,6 +25,9 @@ int CmdHF15Sim(const char *Cmd);
 int CmdHF15Record(const char *Cmd);
 int CmdHF15Cmd(const char*Cmd);
 int CmdHF15CSetUID(const char *Cmd);
+int CmdHF15Dump(const char *Cmd);
+int CmdHF15ELoad(const char *Cmd);
+int CmdHF15ESave(const char *Cmd);
 int CmdHF15CmdHelp(const char*Cmd);
 int CmdHF15Help(const char*Cmd);
 

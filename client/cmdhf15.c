@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <ctype.h>
 
 #include "comms.h"
 #include "graph.h"
@@ -395,7 +396,7 @@ static int usage_15_dump(void) {
 	return 0;
 }
 
-static int CmdHF15Dump(const char *Cmd) {
+int CmdHF15Dump(const char *Cmd) {
 
 	uint8_t fileNameLen = 0;
 	char filename[FILE_PATH_SIZE] = {0};
@@ -427,7 +428,7 @@ static int CmdHF15Dump(const char *Cmd) {
 	//Validations
 	if (errors || (!dump2Emul&&!dump2File)) return usage_15_dump();
 
-   	uint8_t uid[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+   	uint8_t uid[8] = {0};
 	if (!getUID(uid)) {
 		PrintAndLogEx(WARNING, "No tag found.");
 		return 1;
@@ -584,7 +585,7 @@ static int CmdHF15Dump(const char *Cmd) {
 
 		while (bytes_remaining > 0) {
 			uint32_t bytes_in_packet = MIN(USB_CMD_DATA_SIZE, bytes_remaining);
-			UsbCommand c = {CMD_ICLASS_EML_MEMSET, {bytes_sent,bytes_in_packet,0}};
+			UsbCommand c = {CMD_ISO_15693_EML_MEMSET, {bytes_sent,bytes_in_packet,0}};
 			memcpy(c.d.asBytes, tag+bytes_sent, bytes_in_packet);
 			SendCommand(&c);
 			bytes_remaining -= bytes_in_packet;
@@ -593,6 +594,156 @@ static int CmdHF15Dump(const char *Cmd) {
 	}
 
 	free(tag);
+
+	return 0;
+}
+
+int CmdHF15ELoad(const char *Cmd)
+{
+	FILE * f;
+	char filename[FILE_PATH_SIZE] = {0};
+	int len, i;
+	UsbCommand c = {CMD_ISO_15693_EML_MEMSET, {0}};
+
+	len = param_getstr(Cmd, 0, filename, sizeof(filename));
+
+	if (len == 0 || (tolower(filename[0]) == 'h' && len == 1) ||
+		strcmp(filename, "help") == 0 || strcmp(filename, "HELP") == 0)
+	{
+		PrintAndLog("It loads emul dump from the file `filename`");
+		PrintAndLog("Usage:  hf 15 eload <file name.bin>");
+		PrintAndLog("");
+		PrintAndLog(" sample: hf 15 eload filename.bin");
+		return 0;
+	}
+
+	len = param_getstr(Cmd, 0, filename, sizeof(filename));
+
+	if (len > FILE_PATH_SIZE - 5) len = FILE_PATH_SIZE - 5;
+
+	// open file
+	f = fopen(filename, "r");
+	if (f == NULL) {
+		PrintAndLog("File %s not found or locked", filename);
+		strcpy(filename+len, ".bin");
+		f = fopen(filename, "r");
+		if (f == NULL) {
+			PrintAndLog("File %s not found or locked", filename);
+			return 1;
+		}
+	}
+
+	PrintAndLog("Loading %s to the emulator memory", filename);
+
+	for (i = 0; i < CARD_MEMORY_SIZE; i += c.arg[1]) {
+		c.arg[1] = fread(c.d.asBytes, sizeof(uint8_t), USB_CMD_DATA_SIZE, f);
+		if (!c.arg[1])
+			break;
+		c.arg[0] = i;
+		if (c.arg[0] + c.arg[1] > CARD_MEMORY_SIZE) // less than USB_CMD_DATA_SIZE space left
+			c.arg[1] = CARD_MEMORY_SIZE-c.arg[0];
+		SendCommand(&c);
+		printf(".");
+		fflush(stdout);
+	}
+	fclose(f);
+
+	PrintAndLog("Loaded %d bytes from file: %s",
+				MIN(i, CARD_MEMORY_SIZE),
+				filename);
+	return 0;
+}
+
+
+int CmdHF15ESave(const char *Cmd)
+{
+	FILE * f;
+	char filename[FILE_PATH_SIZE] = {0};
+	int i, len;
+	UsbCommand c = {CMD_ISO_15693_EML_MEMGET, {0}};
+	UsbCommand resp;
+
+	len = param_getstr(Cmd, 0, filename, sizeof(filename));
+
+	if ((tolower(filename[0]) == 'h' && len == 1) ||
+		strcmp(filename, "help") == 0 || strcmp(filename, "HELP") == 0)
+	{
+		PrintAndLog("It saves emul dump into the file `filename.bin` or `hf-15-cardID-dump.bin`");
+		PrintAndLog(" Usage:  hf 15 esave [file name `.bin`]");
+		PrintAndLog("");
+		PrintAndLog(" sample: hf 15 esave ");
+		PrintAndLog("         hf 15 esave filename");
+		return 0;
+	}
+
+	len = param_getstr(Cmd, 0, filename, sizeof(filename));
+
+	if (len > FILE_PATH_SIZE - 5) len = FILE_PATH_SIZE - 5;
+
+	if (len > 0)
+	{
+		if (strcmp(filename+len-4, ".bin") != 0)
+			strcpy(filename+len, ".bin");
+	}
+	else
+	{
+		c.arg[1] = 8;
+		SendCommand(&c);
+		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000))
+		{
+			strcpy(filename, "hf-15-");
+			len = 6;
+			for (i = 7; i >= 0; i--, len+=2)
+				snprintf(filename+len, 3, "%02X", resp.d.asBytes[i]);
+			strcpy(filename+len, "-dump.bin");
+			len += 5;
+			i = 1;
+			while(fileExists(filename))
+				snprintf(filename+len, FILE_PATH_SIZE-len, "-%d.bin", i++);
+		}
+		else
+		{
+			PrintAndLog("Timeout while waiting for reply.");
+			return 2;
+		}
+	}
+
+	// open file
+	f = fopen(filename, "w+");
+
+	if ( !f ) {
+		PrintAndLog("Can't open file %s", filename);
+		return 1;
+	}
+
+	PrintAndLog("Dumping the emulator memory to %s", filename);
+
+	// put hex
+	for (i = 0; i < CARD_MEMORY_SIZE; i += c.arg[1]) {
+		c.arg[0] = i;
+		c.arg[1] = USB_CMD_DATA_SIZE;
+		if (i + USB_CMD_DATA_SIZE > CARD_MEMORY_SIZE)
+			c.arg[1] = CARD_MEMORY_SIZE-i;
+		SendCommand(&c);
+
+		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000))
+		{
+			fwrite(resp.d.asBytes, sizeof(uint8_t), c.arg[1], f);
+			printf(".");
+			fflush(stdout);
+		}
+		else
+		{
+			PrintAndLog("Timeout while waiting for reply.");
+			break;
+		}
+	}
+	fclose(f);
+
+	printf("\n");
+
+	PrintAndLog("Saved %d bytes to file: %s", MIN(i, CARD_MEMORY_SIZE),
+				filename);
 
 	return 0;
 }
@@ -612,6 +763,8 @@ static command_t CommandTable15[] =
 	{"findafi", CmdHF15Afi,     0, "Brute force AFI of an ISO15693 tag"},
 	{"dumpmemory", CmdHF15DumpMem,     0, "Read all memory pages of an ISO15693 tag"},
     {"dump",    CmdHF15Dump,    0, "Dump ISO15693 tag data to file or to the emulator memory"},
+    {"eload",   CmdHF15ELoad,   0, "Load a binary ISO15693 dump to the emulator memory"},
+    {"esave",   CmdHF15ESave,   0, "Save the emulator memory to a binary ISO15693 dump"},
 	{"csetuid",	CmdHF15CSetUID,	0,	"Set UID for magic Chinese card"},
 	{NULL, NULL, 0, NULL}
 };

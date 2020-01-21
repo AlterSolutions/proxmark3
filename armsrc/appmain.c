@@ -1168,6 +1168,14 @@ void UsbPacketReceived(uint8_t *packet, int len)
 		case CMD_CSETUID_ISO_15693:
 			SetTag15693Uid(c->d.asBytes);
 			break;
+
+        case CMD_ISO_15693_EML_MEMSET:
+			emlSet(c->d.asBytes,c->arg[0], c->arg[1]);
+			break;
+
+        case CMD_ISO_15693_EML_MEMGET:
+			emlGet(c->arg[0], c->arg[1]);
+			break;
 #endif
 
 #ifdef WITH_LEGICRF
